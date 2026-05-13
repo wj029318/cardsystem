@@ -1,0 +1,165 @@
+<!DOCTYPE html>
+<html lang="zh-TW">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>現場智能定位打卡</title>
+  <script src="https://static.line-scdn.net/liff/edge/2/sdk.js"></script>
+  <style>
+    body { font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif; text-align: center; padding: 20px; background-color: #f4f6f9; margin: 0; }
+    .container { max-width: 400px; margin: 20px auto; background: #fff; padding: 30px 20px; border-radius: 16px; box-shadow: 0 4px 12px rgba(0,0,0,0.05); }
+    h1 { font-size: 22px; color: #333; margin-bottom: 5px; }
+    .status { margin: 20px 0; font-size: 15px; color: #666; min-height: 45px; white-space: pre-line; line-height: 1.4; }
+    .btn { display: block; width: 100%; padding: 16px; margin: 15px 0; font-size: 18px; font-weight: bold; color: #fff; border: none; border-radius: 12px; cursor: pointer; transition: opacity 0.2s; }
+    .btn-in { background-color: #06C755; } /* LINE 經典綠 */
+    .btn-out { background-color: #E53E3E; }
+    .btn:disabled { background-color: #CBD5E0; cursor: not-allowed; }
+    .footer-note { font-size: 12px; color: #999; margin-top: 15px; }
+  </style>
+</head>
+<body>
+  <div class="container">
+    <h1>📍 現場專屬打卡系統</h1>
+    <div id="status" class="status">系統載入與身分驗證中...</div>
+    <button id="btnIn" class="btn btn-in" onclick="checkIn('上班')" disabled>上班打卡</button>
+    <button id="btnOut" class="btn btn-out" onclick="checkIn('下班')" disabled>下班打卡</button>
+    <p class="footer-note">系統將自動偵測距離您最近的門店據點</p>
+  </div>
+
+  <script>
+    // --------------------------------------------------
+    // ⚙️ 系統常數設定 (由 GAS 後端模板安全注入)
+    // --------------------------------------------------
+    const LIFF_ID = "https://script.google.com/macros/s/AKfycbxbXXm9D-9qeqzuUUU17QOAc1EgJ34058WxKd7CTkfhwwPgppaf2jBEwxnID7kHaZw/exec";
+    const GAS_URL = "2010072814-bLPoqQgt";
+    
+    // 🎯 旗下實體據點 GPS 精確座標清單
+    const SHOPS = [
+      { name: "不老客家麻糬 (台北松江店)", lat: 25.0610188, lng: 121.5333524 },
+      { name: "不老客家麻糬 (三重仁華店)", lat: 25.0838607, lng: 121.4843138 }
+    ];
+    const MAX_DISTANCE = 50; // 允許完成打卡的極限誤差半徑（單位：公尺）
+
+    let userProfile = null;
+
+    // 1. 初始化 LIFF 應用程式與使用者資料
+    async function main() {
+      try {
+        if (!LIFF_ID || LIFF_ID.includes("LIFF_ID")) {
+          throw new Error("未能讀取到有效的 LIFF ID 屬性");
+        }
+        await liff.init({ liffId: LIFF_ID });
+        if (!liff.isLoggedIn()) {
+          liff.login();
+          return;
+        }
+        userProfile = await liff.getProfile();
+        document.getElementById("status").innerText = `哈囉，${userProfile.displayName}！\n請點擊下方按鈕執行現場出勤打卡。`;
+        setButtonsDisabled(false);
+      } catch (err) {
+        document.getElementById("status").innerText = "連線初始化失敗，請聯絡系統管理員。\n(" + err.message + ")";
+      }
+    }
+
+    // 2. 觸發定位請求並智能演算最短距離門店
+    function checkIn(statusType) {
+      const statusDiv = document.getElementById("status");
+      statusDiv.innerText = "正在呼叫高精度 GPS 晶片定位中...";
+      setButtonsDisabled(true);
+
+      if (!navigator.geolocation) {
+        alert("您的裝置或瀏覽器環境不支援空間定位功能。");
+        setButtonsDisabled(false);
+        return;
+      }
+
+      navigator.geolocation.getCurrentPosition(
+        async (position) => {
+          const userLat = position.coords.latitude;
+          const userLng = position.coords.longitude;
+          
+          // 空間運算：遍歷所有分店座標，找出距離當前位置最近的實體據點
+          let nearestShop = null;
+          let minDistance = Infinity;
+
+          for (const shop of SHOPS) {
+            const dist = getDistance(userLat, userLng, shop.lat, shop.lng);
+            if (dist < minDistance) {
+              minDistance = dist;
+              nearestShop = shop;
+            }
+          }
+
+          // 安全檢核：驗證最短距離是否落在合規半徑內
+          if (minDistance > MAX_DISTANCE) {
+            statusDiv.innerText = `❌ 打卡遭到系統攔截\n您目前距離最近的據點為【${nearestShop.name}】\n直線距離約 ${Math.round(minDistance)} 公尺，已超出現場規定範圍 (${MAX_DISTANCE}m)。`;
+            setButtonsDisabled(false);
+            return;
+          }
+
+          statusDiv.innerText = `📍 定位成功！確認位於【${nearestShop.name}】範圍內\n正在將出勤紀錄同步至雲端資料庫...`;
+          await sendDataToGAS(statusType, nearestShop.name, minDistance);
+        },
+        (error) => {
+          statusDiv.innerText = "無法鎖定座標。\n請確保手機設定已開啟「定位服務(GPS)」，並授權 LINE 存取位置資訊。";
+          setButtonsDisabled(false);
+        },
+        { enableHighAccuracy: true, timeout: 10000, maximumAge: 0 }
+      );
+    }
+
+    // 3. 透過 Fetch API 將打卡封包安全推送回後台
+    async function sendDataToGAS(statusType, locationName, dist) {
+      const payload = {
+        uid: userProfile.userId,
+        displayName: userProfile.displayName,
+        status: statusType,
+        location: locationName, 
+        distance: dist
+      };
+
+      try {
+        // 使用純文字 MIME Type 發送封包，完美閃避跨域存取 (CORS) 預檢請求攔截
+        const response = await fetch(GAS_URL, {
+          method: "POST",
+          headers: { "Content-Type": "text/plain;charset=utf-8" },
+          body: JSON.stringify(payload)
+        });
+
+        const result = await response.json();
+        if (result.success) {
+          document.getElementById("status").innerText = `✅ 成功於【${locationName}】完成${statusType}打卡！\n辛苦了，打卡視窗即將自動關閉。`;
+          setTimeout(() => { liff.closeWindow(); }, 1800);
+        } else {
+          document.getElementById("status").innerText = "資料庫寫入異常，請立即截圖通知管理員協助補登。";
+          setButtonsDisabled(false);
+        }
+      } catch (err) {
+        document.getElementById("status").innerText = "行動網路訊號不穩導致傳輸中斷，請重新嘗試打卡。";
+        setButtonsDisabled(false);
+      }
+    }
+
+    // 輔助函式：控制按鈕點擊狀態
+    function setButtonsDisabled(disabled) {
+      document.getElementById("btnIn").disabled = disabled;
+      document.getElementById("btnOut").disabled = disabled;
+    }
+
+    // 空間幾何運算：Haversine 經緯度球面距離精算公式
+    function getDistance(lat1, lon1, lat2, lon2) {
+      const R = 6371e3; // 地球平均半徑 (單位：公尺)
+      const p1 = lat1 * Math.PI / 180;
+      const p2 = lat2 * Math.PI / 180;
+      const dp = (lat2 - lat1) * Math.PI / 180;
+      const dl = (lon2 - lon1) * Math.PI / 180;
+      const a = Math.sin(dp/2) * Math.sin(dp/2) + Math.cos(p1) * Math.cos(p2) * Math.sin(dl/2) * Math.sin(dl/2);
+      const c = 2 * Math.atan2(Math.sqrt(a), Math.sqrt(1-a));
+      return R * c;
+    }
+
+    // 啟動主流程
+    main();
+  </script>
+</body>
+</html>
