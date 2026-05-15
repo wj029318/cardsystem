@@ -15,18 +15,6 @@
     .btn-out { background-color: #E53E3E; }
     .btn:disabled { background-color: #CBD5E0; cursor: not-allowed; }
     .footer-note { font-size: 12px; color: #999; margin-top: 15px; }
-    
-    /* 成功彈窗樣式 */
-    .success-modal { display: none; position: fixed; top: 0; left: 0; width: 100%; height: 100%; background: rgba(0,0,0,0.5); z-index: 1000; animation: fadeIn 0.3s; }
-    .success-box { position: absolute; top: 50%; left: 50%; transform: translate(-50%, -50%); background: #fff; padding: 40px 30px; border-radius: 20px; box-shadow: 0 10px 40px rgba(0,0,0,0.2); min-width: 280px; animation: slideUp 0.4s; }
-    .success-icon { font-size: 60px; margin-bottom: 15px; animation: scaleIn 0.5s; }
-    .success-title { font-size: 20pt; font-weight: bold; color: #E53E3E; margin-bottom: 10px; }
-    .success-time { font-size: 24px; color: #333; font-weight: 600; margin-bottom: 8px; }
-    .success-location { font-size: 14px; color: #666; margin-top: 12px; }
-    
-    @keyframes fadeIn { from { opacity: 0; } to { opacity: 1; } }
-    @keyframes slideUp { from { transform: translate(-50%, -40%); opacity: 0; } to { transform: translate(-50%, -50%); opacity: 1; } }
-    @keyframes scaleIn { from { transform: scale(0); } to { transform: scale(1); } }
   </style>
 </head>
 <body>
@@ -36,16 +24,6 @@
     <button id="btnIn" class="btn btn-in" onclick="checkIn('上班')" disabled>上班打卡</button>
     <button id="btnOut" class="btn btn-out" onclick="checkIn('下班')" disabled>下班打卡</button>
     <p class="footer-note">系統將自動偵測距離您最近的門店據點</p>
-  </div>
-
-  <!-- 成功彈窗 -->
-  <div id="successModal" class="success-modal">
-    <div class="success-box">
-      <div class="success-icon">✅</div>
-      <div class="success-title">打卡成功</div>
-      <div class="success-time" id="successTime"></div>
-      <div class="success-location" id="successLocation"></div>
-    </div>
   </div>
 
   <script>
@@ -60,7 +38,7 @@
       { name: "不老客家麻糬 (台北松江店)", lat: 25.0610188, lng: 121.5333524 },
       { name: "不老客家麻糬 (三重仁華店)", lat: 25.0838607, lng: 121.4843138 }
     ];
-    const MAX_DISTANCE = 200; // 允許完成打卡的極限誤差半徑（單位：公尺）
+    const MAX_DISTANCE = 50; // 允許完成打卡的極限誤差半徑（單位：公尺）
 
     let userProfile = null;
 
@@ -76,17 +54,17 @@
           return;
         }
         userProfile = await liff.getProfile();
-        document.getElementById("status").innerText = `哈囉,${userProfile.displayName}!\n請點擊下方按鈕執行現場出勤打卡。`;
+        document.getElementById("status").innerText = `哈囉，${userProfile.displayName}！\n請點擊下方按鈕執行現場出勤打卡。`;
         setButtonsDisabled(false);
       } catch (err) {
-        document.getElementById("status").innerText = "連線初始化失敗,請聯絡系統管理員。\n(" + err.message + ")";
+        document.getElementById("status").innerText = "連線初始化失敗，請聯絡系統管理員。\n(" + err.message + ")";
       }
     }
 
-    // 2. 優化後的打卡流程 - 兩階段定位策略
+    // 2. 觸發定位請求並智能演算最短距離門店
     function checkIn(statusType) {
       const statusDiv = document.getElementById("status");
-      statusDiv.innerText = "正在快速定位中...";
+      statusDiv.innerText = "正在呼叫高精度 GPS 晶片定位中...";
       setButtonsDisabled(true);
 
       if (!navigator.geolocation) {
@@ -95,54 +73,42 @@
         return;
       }
 
-      // 🚀 階段一：快速定位（使用較低精度，快速回應）
       navigator.geolocation.getCurrentPosition(
-        (position) => processLocation(position, statusType, statusDiv),
-        (error) => {
-          // 快速定位失敗，嘗試高精度定位
-          statusDiv.innerText = "正在啟用高精度 GPS 定位...";
-          navigator.geolocation.getCurrentPosition(
-            (position) => processLocation(position, statusType, statusDiv),
-            (error) => {
-              statusDiv.innerText = "無法鎖定座標。\n請確保手機設定已開啟「定位服務(GPS)」,並授權 LINE 存取位置資訊。";
-              setButtonsDisabled(false);
-            },
-            { enableHighAccuracy: true, timeout: 8000, maximumAge: 0 }
-          );
+        async (position) => {
+          const userLat = position.coords.latitude;
+          const userLng = position.coords.longitude;
+          
+          // 空間運算：遍歷所有分店座標，找出距離當前位置最近的實體據點
+          let nearestShop = null;
+          let minDistance = Infinity;
+
+          for (const shop of SHOPS) {
+            const dist = getDistance(userLat, userLng, shop.lat, shop.lng);
+            if (dist < minDistance) {
+              minDistance = dist;
+              nearestShop = shop;
+            }
+          }
+
+          // 安全檢核：驗證最短距離是否落在合規半徑內
+          if (minDistance > MAX_DISTANCE) {
+            statusDiv.innerText = `❌ 打卡遭到系統攔截\n您目前距離最近的據點為【${nearestShop.name}】\n直線距離約 ${Math.round(minDistance)} 公尺，已超出現場規定範圍 (${MAX_DISTANCE}m)。`;
+            setButtonsDisabled(false);
+            return;
+          }
+
+          statusDiv.innerText = `📍 定位成功！確認位於【${nearestShop.name}】範圍內\n正在將出勤紀錄同步至雲端資料庫...`;
+          await sendDataToGAS(statusType, nearestShop.name, minDistance);
         },
-        { enableHighAccuracy: false, timeout: 3000, maximumAge: 30000 }
+        (error) => {
+          statusDiv.innerText = "無法鎖定座標。\n請確保手機設定已開啟「定位服務(GPS)」，並授權 LINE 存取位置資訊。";
+          setButtonsDisabled(false);
+        },
+        { enableHighAccuracy: true, timeout: 10000, maximumAge: 0 }
       );
     }
 
-    // 處理定位結果
-    async function processLocation(position, statusType, statusDiv) {
-      const userLat = position.coords.latitude;
-      const userLng = position.coords.longitude;
-      
-      // 空間運算：遍歷所有分店座標，找出距離當前位置最近的實體據點
-      let nearestShop = null;
-      let minDistance = Infinity;
-
-      for (const shop of SHOPS) {
-        const dist = getDistance(userLat, userLng, shop.lat, shop.lng);
-        if (dist < minDistance) {
-          minDistance = dist;
-          nearestShop = shop;
-        }
-      }
-
-      // 安全檢核：驗證最短距離是否落在合規半徑內
-      if (minDistance > MAX_DISTANCE) {
-        statusDiv.innerText = `❌ 打卡遭到系統攔截\n您目前距離最近的據點為【${nearestShop.name}】\n直線距離約 ${Math.round(minDistance)} 公尺,已超出現場規定範圍 (${MAX_DISTANCE}m)。`;
-        setButtonsDisabled(false);
-        return;
-      }
-
-      statusDiv.innerText = `📍 定位成功!正在處理打卡...`;
-      await sendDataToGAS(statusType, nearestShop.name, minDistance);
-    }
-
-    // 3. 優化後的數據傳送 - 使用非同步標記加速
+    // 3. 透過 Fetch API 將打卡封包安全推送回後台
     async function sendDataToGAS(statusType, locationName, dist) {
       const payload = {
         uid: userProfile.userId,
@@ -153,51 +119,25 @@
       };
 
       try {
-        // 使用 Promise.race 設定超時機制,避免長時間等待
-        const fetchPromise = fetch(GAS_URL, {
+        // 使用純文字 MIME Type 發送封包，完美閃避跨域存取 (CORS) 預檢請求攔截
+        const response = await fetch(GAS_URL, {
           method: "POST",
           headers: { "Content-Type": "text/plain;charset=utf-8" },
           body: JSON.stringify(payload)
         });
 
-        const timeoutPromise = new Promise((_, reject) => 
-          setTimeout(() => reject(new Error('timeout')), 8000)
-        );
-
-        const response = await Promise.race([fetchPromise, timeoutPromise]);
         const result = await response.json();
-        
         if (result.success) {
-          showSuccessModal(statusType, locationName);
+          document.getElementById("status").innerText = `✅ 成功於【${locationName}】完成${statusType}打卡！\n辛苦了，打卡視窗即將自動關閉。`;
+          setTimeout(() => { liff.closeWindow(); }, 1800);
         } else {
-          document.getElementById("status").innerText = "資料庫寫入異常,請立即截圖通知管理員協助補登。";
+          document.getElementById("status").innerText = "資料庫寫入異常，請立即截圖通知管理員協助補登。";
           setButtonsDisabled(false);
         }
       } catch (err) {
-        // 即使超時,也顯示成功(因為請求已發送)
-        if (err.message === 'timeout') {
-          showSuccessModal(statusType, locationName);
-        } else {
-          document.getElementById("status").innerText = "行動網路訊號不穩導致傳輸中斷,請重新嘗試打卡。";
-          setButtonsDisabled(false);
-        }
+        document.getElementById("status").innerText = "行動網路訊號不穩導致傳輸中斷，請重新嘗試打卡。";
+        setButtonsDisabled(false);
       }
-    }
-
-    // 顯示成功彈窗
-    function showSuccessModal(statusType, locationName) {
-      const now = new Date();
-      const timeStr = now.getHours().toString().padStart(2, '0') + ':' + 
-                      now.getMinutes().toString().padStart(2, '0');
-      
-      document.getElementById('successTime').innerText = timeStr;
-      document.getElementById('successLocation').innerText = `${statusType} · ${locationName}`;
-      document.getElementById('successModal').style.display = 'block';
-      
-      // 2秒後自動關閉
-      setTimeout(() => {
-        liff.closeWindow();
-      }, 2000);
     }
 
     // 輔助函式：控制按鈕點擊狀態
