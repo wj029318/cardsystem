@@ -99,9 +99,8 @@
   </div>
 
   <script>
-const LIFF_ID = "2010072814-bLPoqQgt";
+    const LIFF_ID = "2010072814-bLPoqQgt";
     const GAS_URL = "https://script.google.com/macros/s/AKfycbxbXXm9D-9qeqzuUUU17QOAc1EgJ34058WxKd7CTkfhwwPgppaf2jBEwxnID7kHaZw/exec";
-
 
     const SHOPS = [
       { name: "不老客家麻糬 (台北松江店)", lat: 25.0610188, lng: 121.5333524 },
@@ -122,14 +121,35 @@ const LIFF_ID = "2010072814-bLPoqQgt";
         userProfile = await liff.getProfile();
         document.getElementById("status").innerText = `哈囉，${userProfile.displayName}！\n請點擊下方按鈕執行現場出勤打卡。`;
         setButtonsDisabled(false);
+        // 預熱 GPS：提前定位存起來，按按鈕時直接用
+        preloadGPS();
       } catch (err) {
         document.getElementById("status").innerText = "連線初始化失敗，請聯絡系統管理員。\n(" + err.message + ")";
       }
     }
 
+    // GPS 預熱：頁面載入就取位置存起來
+    let cachedPosition = null;
+    function preloadGPS() {
+      if (!navigator.geolocation) return;
+      navigator.geolocation.getCurrentPosition(
+        (pos) => { cachedPosition = pos; },
+        () => {},
+        { enableHighAccuracy: false, timeout: 8000, maximumAge: 30000 }
+      );
+    }
+
+    function findNearest(lat, lng) {
+      let nearestShop = null, minDistance = Infinity;
+      for (const shop of SHOPS) {
+        const dist = getDistance(lat, lng, shop.lat, shop.lng);
+        if (dist < minDistance) { minDistance = dist; nearestShop = shop; }
+      }
+      return { shop: nearestShop, dist: minDistance };
+    }
+
     function checkIn(statusType) {
       const statusDiv = document.getElementById("status");
-      statusDiv.innerText = "定位中...";
       setButtonsDisabled(true);
 
       if (!navigator.geolocation) {
@@ -138,33 +158,38 @@ const LIFF_ID = "2010072814-bLPoqQgt";
         return;
       }
 
+      // 如果有快取位置（30秒內），直接用不等
+      if (cachedPosition && (Date.now() - cachedPosition.timestamp) < 30000) {
+        statusDiv.innerText = "同步中...";
+        processPosition(cachedPosition, statusType);
+        return;
+      }
+
+      statusDiv.innerText = "定位中...";
       navigator.geolocation.getCurrentPosition(
-        async (position) => {
-          const userLat = position.coords.latitude;
-          const userLng = position.coords.longitude;
-
-          let nearestShop = null;
-          let minDistance = Infinity;
-          for (const shop of SHOPS) {
-            const dist = getDistance(userLat, userLng, shop.lat, shop.lng);
-            if (dist < minDistance) { minDistance = dist; nearestShop = shop; }
-          }
-
-          if (minDistance > MAX_DISTANCE) {
-            statusDiv.innerText = `❌ 打卡遭到系統攔截\n您目前距離最近的據點為【${nearestShop.name}】\n直線距離約 ${Math.round(minDistance)} 公尺，已超出現場規定範圍 (${MAX_DISTANCE}m)。`;
-            setButtonsDisabled(false);
-            return;
-          }
-
-          statusDiv.innerText = `📍 定位成功！同步中...`;
-          await sendDataToGAS(statusType, nearestShop.name, minDistance);
-        },
+        (position) => { processPosition(position, statusType); },
         (error) => {
           statusDiv.innerText = "無法鎖定座標。\n請確保已開啟「定位服務(GPS)」，並授權 LINE 存取位置資訊。";
           setButtonsDisabled(false);
         },
-        { enableHighAccuracy: false, timeout: 5000, maximumAge: 10000 }
+        { enableHighAccuracy: false, timeout: 5000, maximumAge: 30000 }
       );
+    }
+
+    async function processPosition(position, statusType) {
+      const statusDiv = document.getElementById("status");
+      const { shop, dist } = findNearest(position.coords.latitude, position.coords.longitude);
+
+      if (dist > MAX_DISTANCE) {
+        statusDiv.innerText = `❌ 打卡遭到系統攔截\n您目前距離最近的據點為【${shop.name}】\n直線距離約 ${Math.round(dist)} 公尺，已超出現場規定範圍 (${MAX_DISTANCE}m)。`;
+        setButtonsDisabled(false);
+        return;
+      }
+
+      // 先顯示成功，背景送出
+      showSuccessModal(statusType, shop.name);
+      sendDataToGAS(statusType, shop.name, dist);
+      preloadGPS();
     }
 
     async function sendDataToGAS(statusType, locationName, dist) {
