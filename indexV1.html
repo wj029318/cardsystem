@@ -1,0 +1,281 @@
+<!DOCTYPE html>
+<html lang="zh-TW">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>現場智能定位打卡</title>
+  <script src="https://static.line-scdn.net/liff/edge/2/sdk.js"></script>
+  <style>
+    body { font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif; text-align: center; padding: 20px; background-color: #f4f6f9; margin: 0; }
+    .container { max-width: 400px; margin: 20px auto; background: #fff; padding: 30px 20px; border-radius: 16px; box-shadow: 0 4px 12px rgba(0,0,0,0.05); }
+    h1 { font-size: 22px; color: #333; margin-bottom: 5px; }
+    .status { margin: 20px 0; font-size: 15px; color: #666; min-height: 45px; white-space: pre-line; line-height: 1.4; }
+    .btn { display: block; width: 100%; padding: 16px; margin: 15px 0; font-size: 18px; font-weight: bold; color: #fff; border: none; border-radius: 12px; cursor: pointer; transition: opacity 0.2s; }
+    .btn-in { background-color: #06C755; }
+    .btn-out { background-color: #E53E3E; }
+    .btn:disabled { background-color: #CBD5E0; cursor: not-allowed; }
+    .footer-note { font-size: 12px; color: #999; margin-top: 15px; }
+
+    /* 打卡成功彈窗 */
+    .modal-overlay {
+      display: none;
+      position: fixed; top: 0; left: 0; right: 0; bottom: 0;
+      background: rgba(0,0,0,0.5);
+      z-index: 999;
+      justify-content: center; align-items: center;
+    }
+    .modal-overlay.show { display: flex; }
+    .modal-box {
+      background: #fff;
+      border-radius: 20px;
+      padding: 36px 28px;
+      width: 320px;
+      text-align: center;
+      box-shadow: 0 8px 30px rgba(0,0,0,0.15);
+      animation: popIn .3s ease;
+    }
+    @keyframes popIn {
+      from { transform: scale(0.8); opacity: 0; }
+      to   { transform: scale(1);   opacity: 1; }
+    }
+    .modal-success {
+      font-size: 20pt;
+      font-weight: bold;
+      color: #E53E3E;
+      margin-bottom: 12px;
+    }
+    .modal-time {
+      font-size: 36px;
+      font-weight: 800;
+      color: #1e293b;
+      margin: 12px 0;
+      letter-spacing: 2px;
+    }
+    .modal-location {
+      font-size: 14px;
+      color: #64748b;
+      margin-bottom: 6px;
+    }
+    .modal-type {
+      display: inline-block;
+      font-size: 14px;
+      font-weight: 700;
+      padding: 4px 16px;
+      border-radius: 20px;
+      margin-bottom: 16px;
+    }
+    .modal-type-in  { background: #d1fae5; color: #065f46; }
+    .modal-type-out { background: #fee2e2; color: #991b1b; }
+    .modal-close-btn {
+      display: block; width: 100%; padding: 14px;
+      font-size: 16px; font-weight: 700; color: #fff;
+      background: #1e293b; border: none; border-radius: 12px;
+      cursor: pointer; margin-top: 10px;
+    }
+    .modal-auto {
+      font-size: 12px; color: #94a3b8; margin-top: 10px;
+    }
+  </style>
+</head>
+<body>
+  <div class="container">
+    <h1>📍 現場專屬打卡系統</h1>
+    <div id="status" class="status">系統載入與身分驗證中...</div>
+    <button id="btnIn" class="btn btn-in" onclick="checkIn('上班')" disabled>上班打卡</button>
+    <button id="btnOut" class="btn btn-out" onclick="checkIn('下班')" disabled>下班打卡</button>
+    <p class="footer-note">系統將自動偵測距離您最近的門店據點</p>
+  </div>
+
+  <!-- 打卡成功彈窗 -->
+  <div class="modal-overlay" id="successModal">
+    <div class="modal-box">
+      <div class="modal-success">✅ 打卡成功</div>
+      <div id="modalType" class="modal-type modal-type-in">上班</div>
+      <div id="modalTime" class="modal-time">12:35</div>
+      <div id="modalLocation" class="modal-location">不老客家麻糬 (台北松江店)</div>
+      <button class="modal-close-btn" onclick="closeAndExit()">確認</button>
+      <div class="modal-auto" id="modalAuto">3 秒後自動關閉</div>
+    </div>
+  </div>
+
+  <script>
+    const LIFF_ID = "2010072814-bLPoqQgt";
+    const GAS_URL = "https://script.google.com/macros/s/AKfycbxbXXm9D-9qeqzuUUU17QOAc1EgJ34058WxKd7CTkfhwwPgppaf2jBEwxnID7kHaZw/exec";
+
+    const SHOPS = [
+      { name: "不老客家麻糬 (台北松江店)", lat: 25.0610188, lng: 121.5333524 },
+      { name: "不老客家麻糬 (三重仁華店)", lat: 25.0838607, lng: 121.4843138 }
+    ];
+    const MAX_DISTANCE = 300;
+
+    let userProfile = null;
+    let autoCloseTimer = null;
+
+    async function main() {
+      try {
+        if (!LIFF_ID || LIFF_ID.includes("LIFF_ID")) {
+          throw new Error("未能讀取到有效的 LIFF ID 屬性");
+        }
+        await liff.init({ liffId: LIFF_ID });
+        if (!liff.isLoggedIn()) { liff.login(); return; }
+        userProfile = await liff.getProfile();
+        document.getElementById("status").innerText = `哈囉，${userProfile.displayName}！\n請點擊下方按鈕執行現場出勤打卡。`;
+        setButtonsDisabled(false);
+        // 預熱 GPS：提前定位存起來，按按鈕時直接用
+        preloadGPS();
+      } catch (err) {
+        document.getElementById("status").innerText = "連線初始化失敗，請聯絡系統管理員。\n(" + err.message + ")";
+      }
+    }
+
+    // GPS 預熱：頁面載入就取位置存起來
+    let cachedPosition = null;
+    function preloadGPS() {
+      if (!navigator.geolocation) return;
+      navigator.geolocation.getCurrentPosition(
+        (pos) => { cachedPosition = pos; },
+        () => {},
+        { enableHighAccuracy: false, timeout: 8000, maximumAge: 30000 }
+      );
+    }
+
+    function findNearest(lat, lng) {
+      let nearestShop = null, minDistance = Infinity;
+      for (const shop of SHOPS) {
+        const dist = getDistance(lat, lng, shop.lat, shop.lng);
+        if (dist < minDistance) { minDistance = dist; nearestShop = shop; }
+      }
+      return { shop: nearestShop, dist: minDistance };
+    }
+
+    function checkIn(statusType) {
+      const statusDiv = document.getElementById("status");
+      setButtonsDisabled(true);
+
+      if (!navigator.geolocation) {
+        alert("您的裝置不支援定位功能。");
+        setButtonsDisabled(false);
+        return;
+      }
+
+      // 如果有快取位置（30秒內），直接用不等
+      if (cachedPosition && (Date.now() - cachedPosition.timestamp) < 30000) {
+        statusDiv.innerText = "同步中...";
+        processPosition(cachedPosition, statusType);
+        return;
+      }
+
+      statusDiv.innerText = "定位中...";
+      navigator.geolocation.getCurrentPosition(
+        (position) => { processPosition(position, statusType); },
+        (error) => {
+          statusDiv.innerText = "無法鎖定座標。\n請確保已開啟「定位服務(GPS)」，並授權 LINE 存取位置資訊。";
+          setButtonsDisabled(false);
+        },
+        { enableHighAccuracy: false, timeout: 5000, maximumAge: 30000 }
+      );
+    }
+
+    async function processPosition(position, statusType) {
+      const statusDiv = document.getElementById("status");
+      const { shop, dist } = findNearest(position.coords.latitude, position.coords.longitude);
+
+      if (dist > MAX_DISTANCE) {
+        statusDiv.innerText = `❌ 打卡遭到系統攔截\n您目前距離最近的據點為【${shop.name}】\n直線距離約 ${Math.round(dist)} 公尺，已超出現場規定範圍 (${MAX_DISTANCE}m)。`;
+        setButtonsDisabled(false);
+        return;
+      }
+
+      // 先顯示成功，背景送出
+      showSuccessModal(statusType, shop.name);
+      sendDataToGAS(statusType, shop.name, dist);
+      preloadGPS();
+    }
+
+    async function sendDataToGAS(statusType, locationName, dist) {
+      const payload = {
+        uid: userProfile.userId,
+        displayName: userProfile.displayName,
+        status: statusType,
+        location: locationName,
+        distance: dist
+      };
+
+      try {
+        const response = await fetch(GAS_URL, {
+          method: "POST",
+          headers: { "Content-Type": "text/plain;charset=utf-8" },
+          body: JSON.stringify(payload)
+        });
+
+        const result = await response.json();
+        if (result.success) {
+          showSuccessModal(statusType, locationName);
+        } else {
+          document.getElementById("status").innerText = "資料庫寫入異常，請截圖通知管理員協助補登。";
+          setButtonsDisabled(false);
+        }
+      } catch (err) {
+        document.getElementById("status").innerText = "網路不穩導致傳輸中斷，請重新嘗試。";
+        setButtonsDisabled(false);
+      }
+    }
+
+    function showSuccessModal(statusType, locationName) {
+      // 取得當前時間 HH:mm
+      const now = new Date();
+      const hh = String(now.getHours()).padStart(2, '0');
+      const mm = String(now.getMinutes()).padStart(2, '0');
+      const timeStr = hh + ':' + mm;
+
+      document.getElementById("modalTime").innerText = timeStr;
+      document.getElementById("modalLocation").innerText = locationName;
+
+      const typeEl = document.getElementById("modalType");
+      typeEl.innerText = statusType;
+      typeEl.className = 'modal-type ' + (statusType === '上班' ? 'modal-type-in' : 'modal-type-out');
+
+      document.getElementById("successModal").classList.add("show");
+      document.getElementById("status").innerText = `✅ ${statusType}打卡完成！`;
+
+      // 倒數自動關閉
+      let countdown = 3;
+      const autoEl = document.getElementById("modalAuto");
+      autoEl.innerText = countdown + ' 秒後自動關閉';
+      autoCloseTimer = setInterval(() => {
+        countdown--;
+        if (countdown <= 0) {
+          clearInterval(autoCloseTimer);
+          closeAndExit();
+        } else {
+          autoEl.innerText = countdown + ' 秒後自動關閉';
+        }
+      }, 1000);
+    }
+
+    function closeAndExit() {
+      if (autoCloseTimer) clearInterval(autoCloseTimer);
+      document.getElementById("successModal").classList.remove("show");
+      try { liff.closeWindow(); } catch(e) {}
+    }
+
+    function setButtonsDisabled(disabled) {
+      document.getElementById("btnIn").disabled = disabled;
+      document.getElementById("btnOut").disabled = disabled;
+    }
+
+    function getDistance(lat1, lon1, lat2, lon2) {
+      const R = 6371e3;
+      const p1 = lat1 * Math.PI / 180;
+      const p2 = lat2 * Math.PI / 180;
+      const dp = (lat2 - lat1) * Math.PI / 180;
+      const dl = (lon2 - lon1) * Math.PI / 180;
+      const a = Math.sin(dp/2) * Math.sin(dp/2) + Math.cos(p1) * Math.cos(p2) * Math.sin(dl/2) * Math.sin(dl/2);
+      const c = 2 * Math.atan2(Math.sqrt(a), Math.sqrt(1-a));
+      return R * c;
+    }
+
+    main();
+  </script>
+</body>
+</html>
