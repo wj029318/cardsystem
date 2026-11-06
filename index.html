@@ -9,11 +9,14 @@
     body { font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif; text-align: center; padding: 20px; background-color: #f4f6f9; margin: 0; }
     .container { max-width: 400px; margin: 20px auto; background: #fff; padding: 30px 20px; border-radius: 16px; box-shadow: 0 4px 12px rgba(0,0,0,0.05); }
     h1 { font-size: 22px; color: #333; margin-bottom: 5px; }
-    .status { margin: 20px 0; font-size: 15px; color: #666; min-height: 45px; white-space: pre-line; line-height: 1.4; }
-    .btn { display: block; width: 100%; padding: 16px; margin: 15px 0; font-size: 18px; font-weight: bold; color: #fff; border: none; border-radius: 12px; cursor: pointer; transition: opacity 0.2s; }
+    .clock { font-size: 48px; font-weight: 800; color: #1e293b; margin: 8px 0 4px; letter-spacing: 2px; font-variant-numeric: tabular-nums; }
+    .date-display { font-size: 14px; color: #94a3b8; margin-bottom: 16px; }
+    .status { margin: 16px 0; font-size: 15px; color: #666; min-height: 45px; white-space: pre-line; line-height: 1.4; }
+    .btn { display: block; width: 100%; padding: 16px; margin: 12px 0; font-size: 18px; font-weight: bold; color: #fff; border: none; border-radius: 12px; cursor: pointer; transition: all 0.2s; }
     .btn-in { background-color: #06C755; }
     .btn-out { background-color: #E53E3E; }
     .btn:disabled { background-color: #CBD5E0; cursor: not-allowed; }
+    .btn:not(:disabled):active { transform: scale(0.97); }
     .footer-note { font-size: 12px; color: #999; margin-top: 15px; }
 
     /* 打卡成功彈窗 */
@@ -38,10 +41,11 @@
       from { transform: scale(0.8); opacity: 0; }
       to   { transform: scale(1);   opacity: 1; }
     }
+    .modal-icon { font-size: 48px; margin-bottom: 8px; }
     .modal-success {
       font-size: 20pt;
       font-weight: bold;
-      color: #E53E3E;
+      color: #1e293b;
       margin-bottom: 12px;
     }
     .modal-time {
@@ -50,6 +54,11 @@
       color: #1e293b;
       margin: 12px 0;
       letter-spacing: 2px;
+    }
+    .modal-date {
+      font-size: 14px;
+      color: #94a3b8;
+      margin-bottom: 4px;
     }
     .modal-location {
       font-size: 14px;
@@ -66,6 +75,12 @@
     }
     .modal-type-in  { background: #d1fae5; color: #065f46; }
     .modal-type-out { background: #fee2e2; color: #991b1b; }
+    .modal-line-note {
+      font-size: 12px;
+      color: #06C755;
+      margin: 8px 0 4px;
+      font-weight: 600;
+    }
     .modal-close-btn {
       display: block; width: 100%; padding: 14px;
       font-size: 16px; font-weight: 700; color: #fff;
@@ -80,38 +95,76 @@
 <body>
   <div class="container">
     <h1>📍 現場專屬打卡系統</h1>
+    <div id="liveClock" class="clock">--:--</div>
+    <div id="liveDate" class="date-display"></div>
     <div id="status" class="status">系統載入與身分驗證中...</div>
-    <button id="btnIn" class="btn btn-in" onclick="checkIn('上班')" disabled>上班打卡</button>
-    <button id="btnOut" class="btn btn-out" onclick="checkIn('下班')" disabled>下班打卡</button>
+    <button id="btnIn" class="btn btn-in" onclick="doPunch('上班')" disabled>上班打卡</button>
+    <button id="btnOut" class="btn btn-out" onclick="doPunch('下班')" disabled>下班打卡</button>
     <p class="footer-note">系統將自動偵測距離您最近的門店據點</p>
   </div>
 
   <!-- 打卡成功彈窗 -->
   <div class="modal-overlay" id="successModal">
     <div class="modal-box">
-      <div class="modal-success">✅ 打卡成功</div>
+      <div class="modal-icon" id="modalIcon">✅</div>
+      <div class="modal-success">打卡成功</div>
       <div id="modalType" class="modal-type modal-type-in">上班</div>
+      <div id="modalDate" class="modal-date"></div>
       <div id="modalTime" class="modal-time">12:35</div>
       <div id="modalLocation" class="modal-location">不老客家麻糬 (台北松江店)</div>
+      <div id="modalLineNote" class="modal-line-note" style="display:none">LINE 出勤憑證已發送</div>
       <button class="modal-close-btn" onclick="closeAndExit()">確認</button>
-      <div class="modal-auto" id="modalAuto">3 秒後自動關閉</div>
+      <div class="modal-auto" id="modalAuto">5 秒後自動關閉</div>
     </div>
   </div>
 
   <script>
-    const LIFF_ID = "2010072814-bLPoqQgt";
-    const GAS_URL = "https://script.google.com/macros/s/AKfycbxbXXm9D-9qeqzuUUU17QOAc1EgJ34058WxKd7CTkfhwwPgppaf2jBEwxnID7kHaZw/exec";
+    /* ══ 設定 ══════════════════════════════════════ */
+    const LIFF_ID  = "2010072814-bLPoqQgt";
+    const GAS_URL  = "https://script.google.com/macros/s/AKfycbxbXXm9D-9qeqzuUUU17QOAc1EgJ34058WxKd7CTkfhwwPgppaf2jBEwxnID7kHaZw/exec";
 
     const SHOPS = [
       { name: "不老客家麻糬 (台北松江店)", lat: 25.0610188, lng: 121.5333524 },
       { name: "不老客家麻糬 (三重仁華店)", lat: 25.0838607, lng: 121.4843138 },
-      { name: "遠東Garden City", lat: 25.0419, lng: 121.5573 }
+      { name: "遠東Garden City",          lat: 25.0419,    lng: 121.5573 }
     ];
-    const MAX_DISTANCE = 1000;
+    const MAX_DISTANCE = 1000; // 公尺
 
-    let userProfile = null;
+    /* ══ 全域變數 ══════════════════════════════════ */
+    let userProfile   = null;
     let autoCloseTimer = null;
+    let cachedPosition = null;
 
+    /* ══ 即時時鐘 ══════════════════════════════════ */
+    const WD = ['日','一','二','三','四','五','六'];
+    function tickClock() {
+      const now = new Date();
+      const hh = String(now.getHours()).padStart(2,'0');
+      const mm = String(now.getMinutes()).padStart(2,'0');
+      const ss = String(now.getSeconds()).padStart(2,'0');
+      document.getElementById('liveClock').textContent = hh + ':' + mm + ':' + ss;
+      const y = now.getFullYear(), mo = now.getMonth()+1, d = now.getDate();
+      document.getElementById('liveDate').textContent =
+        `${y}/${String(mo).padStart(2,'0')}/${String(d).padStart(2,'0')}（週${WD[now.getDay()]}）`;
+    }
+    setInterval(tickClock, 1000);
+    tickClock();
+
+    /* ══ 格式化工具 ════════════════════════════════ */
+    function fmtDateTime(date) {
+      const y  = date.getFullYear();
+      const mo = String(date.getMonth()+1).padStart(2,'0');
+      const d  = String(date.getDate()).padStart(2,'0');
+      const hh = String(date.getHours()).padStart(2,'0');
+      const mm = String(date.getMinutes()).padStart(2,'0');
+      return {
+        dateStr: `${y}/${mo}/${d}（週${WD[date.getDay()]}）`,
+        timeStr: `${hh}:${mm}`,
+        fullStr: `${y}/${mo}/${d} ${hh}:${mm}`
+      };
+    }
+
+    /* ══ LIFF 初始化 ═══════════════════════════════ */
     async function main() {
       try {
         if (!LIFF_ID || LIFF_ID.includes("LIFF_ID")) {
@@ -120,17 +173,17 @@
         await liff.init({ liffId: LIFF_ID });
         if (!liff.isLoggedIn()) { liff.login(); return; }
         userProfile = await liff.getProfile();
-        document.getElementById("status").innerText = `哈囉，${userProfile.displayName}！\n請點擊下方按鈕執行現場出勤打卡。`;
+        document.getElementById("status").innerText =
+          `哈囉，${userProfile.displayName}！\n請點擊下方按鈕執行現場出勤打卡。`;
         setButtonsDisabled(false);
-        // 預熱 GPS：提前定位存起來，按按鈕時直接用
         preloadGPS();
       } catch (err) {
-        document.getElementById("status").innerText = "連線初始化失敗，請聯絡系統管理員。\n(" + err.message + ")";
+        document.getElementById("status").innerText =
+          "連線初始化失敗，請聯絡系統管理員。\n(" + err.message + ")";
       }
     }
 
-    // GPS 預熱：頁面載入就取位置存起來
-    let cachedPosition = null;
+    /* ══ GPS 預熱 ══════════════════════════════════ */
     function preloadGPS() {
       if (!navigator.geolocation) return;
       navigator.geolocation.getCurrentPosition(
@@ -140,16 +193,26 @@
       );
     }
 
-    function findNearest(lat, lng) {
-      let nearestShop = null, minDistance = Infinity;
-      for (const shop of SHOPS) {
-        const dist = getDistance(lat, lng, shop.lat, shop.lng);
-        if (dist < minDistance) { minDistance = dist; nearestShop = shop; }
-      }
-      return { shop: nearestShop, dist: minDistance };
+    /* ══ 距離計算 ══════════════════════════════════ */
+    function getDistance(lat1, lon1, lat2, lon2) {
+      const R = 6371e3;
+      const p1 = lat1 * Math.PI/180, p2 = lat2 * Math.PI/180;
+      const dp = (lat2-lat1)*Math.PI/180, dl = (lon2-lon1)*Math.PI/180;
+      const a = Math.sin(dp/2)**2 + Math.cos(p1)*Math.cos(p2)*Math.sin(dl/2)**2;
+      return R * 2 * Math.atan2(Math.sqrt(a), Math.sqrt(1-a));
     }
 
-    function checkIn(statusType) {
+    function findNearest(lat, lng) {
+      let best = null, minDist = Infinity;
+      for (const s of SHOPS) {
+        const d = getDistance(lat, lng, s.lat, s.lng);
+        if (d < minDist) { minDist = d; best = s; }
+      }
+      return { shop: best, dist: minDist };
+    }
+
+    /* ══ 打卡主流程 ════════════════════════════════ */
+    function doPunch(statusType) {
       const statusDiv = document.getElementById("status");
       setButtonsDisabled(true);
 
@@ -159,7 +222,7 @@
         return;
       }
 
-      // 如果有快取位置（30秒內），直接用不等
+      // 有快取位置（30秒內）就直接用
       if (cachedPosition && (Date.now() - cachedPosition.timestamp) < 30000) {
         statusDiv.innerText = "同步中...";
         processPosition(cachedPosition, statusType);
@@ -168,8 +231,8 @@
 
       statusDiv.innerText = "定位中...";
       navigator.geolocation.getCurrentPosition(
-        (position) => { processPosition(position, statusType); },
-        (error) => {
+        (pos) => { processPosition(pos, statusType); },
+        () => {
           statusDiv.innerText = "無法鎖定座標。\n請確保已開啟「定位服務(GPS)」，並授權 LINE 存取位置資訊。";
           setButtonsDisabled(false);
         },
@@ -178,21 +241,26 @@
     }
 
     async function processPosition(position, statusType) {
-      const statusDiv = document.getElementById("status");
       const { shop, dist } = findNearest(position.coords.latitude, position.coords.longitude);
 
       if (dist > MAX_DISTANCE) {
-        statusDiv.innerText = `❌ 打卡遭到系統攔截\n您目前距離最近的據點為【${shop.name}】\n直線距離約 ${Math.round(dist)} 公尺，已超出現場規定範圍 (${MAX_DISTANCE}m)。`;
+        document.getElementById("status").innerText =
+          `❌ 打卡遭到系統攔截\n您目前距離最近的據點為【${shop.name}】\n直線距離約 ${Math.round(dist)} 公尺，已超出現場規定範圍 (${MAX_DISTANCE}m)。`;
         setButtonsDisabled(false);
         return;
       }
 
-      // 先顯示成功，背景送出
-      showSuccessModal(statusType, shop.name);
+      // 記錄打卡瞬間時間
+      const punchTime = new Date();
+
+      // 先彈窗 → 背景同步寫入 + LINE 通知
+      showSuccessModal(statusType, shop.name, punchTime);
       sendDataToGAS(statusType, shop.name, dist);
+      sendLINEReceipt(statusType, shop.name, punchTime);
       preloadGPS();
     }
 
+    /* ══ 寫入 GAS ══════════════════════════════════ */
     async function sendDataToGAS(statusType, locationName, dist) {
       const payload = {
         uid: userProfile.userId,
@@ -203,53 +271,179 @@
       };
 
       try {
-        const response = await fetch(GAS_URL, {
+        const res = await fetch(GAS_URL, {
           method: "POST",
           headers: { "Content-Type": "text/plain;charset=utf-8" },
           body: JSON.stringify(payload)
         });
-
-        const result = await response.json();
-        if (result.success) {
-          showSuccessModal(statusType, locationName);
-        } else {
-          document.getElementById("status").innerText = "資料庫寫入異常，請截圖通知管理員協助補登。";
-          setButtonsDisabled(false);
+        const result = await res.json();
+        if (!result.success) {
+          document.getElementById("status").innerText =
+            "⚠️ 資料庫寫入異常，請截圖通知管理員協助補登。";
         }
       } catch (err) {
-        document.getElementById("status").innerText = "網路不穩導致傳輸中斷，請重新嘗試。";
-        setButtonsDisabled(false);
+        document.getElementById("status").innerText =
+          "⚠️ 網路不穩導致傳輸中斷，請截圖此畫面作為憑證，並通知管理員補登。";
       }
     }
 
-    function showSuccessModal(statusType, locationName) {
-      // 取得當前時間 HH:mm
-      const now = new Date();
-      const hh = String(now.getHours()).padStart(2, '0');
-      const mm = String(now.getMinutes()).padStart(2, '0');
-      const timeStr = hh + ':' + mm;
+    /* ══ LINE 出勤憑證通知（Flex Message）══════════ */
+    async function sendLINEReceipt(statusType, locationName, punchTime) {
+      // 只有在 LINE 聊天視窗內開啟 LIFF 時才能發訊息
+      if (!liff.isInClient()) return;
 
-      document.getElementById("modalTime").innerText = timeStr;
-      document.getElementById("modalLocation").innerText = locationName;
+      const { dateStr, timeStr } = fmtDateTime(punchTime);
+      const isIn = (statusType === '上班');
+
+      const flexMsg = {
+        type: "flex",
+        altText: `✅ ${statusType}打卡成功 ${timeStr}`,
+        contents: {
+          type: "bubble",
+          size: "kilo",
+          header: {
+            type: "box",
+            layout: "vertical",
+            backgroundColor: isIn ? "#06C755" : "#E53E3E",
+            paddingAll: "16px",
+            contents: [
+              {
+                type: "box",
+                layout: "horizontal",
+                contents: [
+                  {
+                    type: "text",
+                    text: "✅ 出勤打卡記錄",
+                    color: "#ffffff",
+                    weight: "bold",
+                    size: "md",
+                    flex: 1
+                  },
+                  {
+                    type: "text",
+                    text: statusType,
+                    color: "#ffffff",
+                    weight: "bold",
+                    size: "sm",
+                    align: "end",
+                    gravity: "center"
+                  }
+                ]
+              }
+            ]
+          },
+          body: {
+            type: "box",
+            layout: "vertical",
+            spacing: "md",
+            paddingAll: "20px",
+            contents: [
+              {
+                type: "box",
+                layout: "horizontal",
+                contents: [
+                  { type: "text", text: "員工", color: "#aaaaaa", size: "sm", flex: 2 },
+                  { type: "text", text: userProfile.displayName, weight: "bold", size: "sm", flex: 5, align: "end" }
+                ]
+              },
+              { type: "separator" },
+              {
+                type: "box",
+                layout: "horizontal",
+                contents: [
+                  { type: "text", text: "日期", color: "#aaaaaa", size: "sm", flex: 2 },
+                  { type: "text", text: dateStr, weight: "bold", size: "sm", flex: 5, align: "end" }
+                ]
+              },
+              {
+                type: "box",
+                layout: "horizontal",
+                contents: [
+                  { type: "text", text: "時間", color: "#aaaaaa", size: "sm", flex: 2 },
+                  { type: "text", text: timeStr, weight: "bold", size: "lg", flex: 5, align: "end", color: "#1e293b" }
+                ]
+              },
+              { type: "separator" },
+              {
+                type: "box",
+                layout: "horizontal",
+                contents: [
+                  { type: "text", text: "地點", color: "#aaaaaa", size: "sm", flex: 2 },
+                  { type: "text", text: locationName, weight: "bold", size: "sm", flex: 5, align: "end", wrap: true }
+                ]
+              }
+            ]
+          },
+          footer: {
+            type: "box",
+            layout: "vertical",
+            paddingAll: "12px",
+            contents: [
+              {
+                type: "text",
+                text: "此訊息為出勤記錄雙方憑證，請勿刪除",
+                size: "xxs",
+                color: "#aaaaaa",
+                align: "center",
+                wrap: true
+              },
+              {
+                type: "text",
+                text: "好食齋食品行｜不老客家麻糬",
+                size: "xxs",
+                color: "#cccccc",
+                align: "center",
+                margin: "sm"
+              }
+            ]
+          }
+        }
+      };
+
+      try {
+        await liff.sendMessages([flexMsg]);
+        // 顯示已發送提示
+        const noteEl = document.getElementById("modalLineNote");
+        if (noteEl) { noteEl.style.display = "block"; }
+      } catch (e) {
+        // sendMessages 失敗（可能不在聊天視窗或未授權 chat_message.write）
+        // 靜默失敗 — 彈窗仍在，只是沒發 LINE 訊息
+        console.log("LINE sendMessages 失敗:", e.message);
+      }
+    }
+
+    /* ══ 成功彈窗 ══════════════════════════════════ */
+    function showSuccessModal(statusType, locationName, punchTime) {
+      const { dateStr, timeStr } = fmtDateTime(punchTime);
+      const isIn = (statusType === '上班');
+
+      document.getElementById("modalIcon").textContent   = isIn ? '✅' : '🔴';
+      document.getElementById("modalDate").textContent    = dateStr;
+      document.getElementById("modalTime").textContent    = timeStr;
+      document.getElementById("modalLocation").textContent = locationName;
 
       const typeEl = document.getElementById("modalType");
-      typeEl.innerText = statusType;
-      typeEl.className = 'modal-type ' + (statusType === '上班' ? 'modal-type-in' : 'modal-type-out');
+      typeEl.textContent = statusType;
+      typeEl.className = 'modal-type ' + (isIn ? 'modal-type-in' : 'modal-type-out');
+
+      // 隱藏 LINE 通知提示（由 sendLINEReceipt 決定是否顯示）
+      document.getElementById("modalLineNote").style.display = "none";
 
       document.getElementById("successModal").classList.add("show");
       document.getElementById("status").innerText = `✅ ${statusType}打卡完成！`;
 
-      // 倒數自動關閉
-      let countdown = 3;
+      // 倒數 5 秒自動關閉（延長給員工看清楚）
+      let countdown = 5;
       const autoEl = document.getElementById("modalAuto");
-      autoEl.innerText = countdown + ' 秒後自動關閉';
+      autoEl.textContent = countdown + ' 秒後自動關閉';
+      if (autoCloseTimer) clearInterval(autoCloseTimer);
       autoCloseTimer = setInterval(() => {
         countdown--;
         if (countdown <= 0) {
           clearInterval(autoCloseTimer);
           closeAndExit();
         } else {
-          autoEl.innerText = countdown + ' 秒後自動關閉';
+          autoEl.textContent = countdown + ' 秒後自動關閉';
         }
       }, 1000);
     }
@@ -260,20 +454,10 @@
       try { liff.closeWindow(); } catch(e) {}
     }
 
+    /* ══ 工具 ══════════════════════════════════════ */
     function setButtonsDisabled(disabled) {
-      document.getElementById("btnIn").disabled = disabled;
+      document.getElementById("btnIn").disabled  = disabled;
       document.getElementById("btnOut").disabled = disabled;
-    }
-
-    function getDistance(lat1, lon1, lat2, lon2) {
-      const R = 6371e3;
-      const p1 = lat1 * Math.PI / 180;
-      const p2 = lat2 * Math.PI / 180;
-      const dp = (lat2 - lat1) * Math.PI / 180;
-      const dl = (lon2 - lon1) * Math.PI / 180;
-      const a = Math.sin(dp/2) * Math.sin(dp/2) + Math.cos(p1) * Math.cos(p2) * Math.sin(dl/2) * Math.sin(dl/2);
-      const c = 2 * Math.atan2(Math.sqrt(a), Math.sqrt(1-a));
-      return R * c;
     }
 
     main();
