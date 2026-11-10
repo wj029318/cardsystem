@@ -15,8 +15,10 @@
     .btn { display: block; width: 100%; padding: 16px; margin: 12px 0; font-size: 18px; font-weight: bold; color: #fff; border: none; border-radius: 12px; cursor: pointer; transition: all 0.2s; }
     .btn-in { background-color: #06C755; }
     .btn-out { background-color: #E53E3E; }
-    .btn:disabled { background-color: #CBD5E0; cursor: not-allowed; }
+    .btn:disabled { background-color: #CBD5E0; cursor: not-allowed; opacity: 1; }
     .btn:not(:disabled):active { transform: scale(0.97); }
+    .btn-dim { opacity: 0.35; }
+    .punch-hint { font-size: 13px; color: #06C755; font-weight: 600; margin-top: 4px; margin-bottom: 0; }
     .footer-note { font-size: 12px; color: #999; margin-top: 15px; }
 
     /* 打卡成功彈窗 */
@@ -81,6 +83,12 @@
       margin: 8px 0 4px;
       font-weight: 600;
     }
+    .modal-warning {
+      font-size: 13px;
+      color: #E53E3E;
+      font-weight: 600;
+      margin: 8px 0;
+    }
     .modal-close-btn {
       display: block; width: 100%; padding: 14px;
       font-size: 16px; font-weight: 700; color: #fff;
@@ -90,6 +98,26 @@
     .modal-auto {
       font-size: 12px; color: #94a3b8; margin-top: 10px;
     }
+
+    /* 確認彈窗 */
+    .confirm-box {
+      background: #fff;
+      border-radius: 20px;
+      padding: 28px 24px;
+      width: 300px;
+      text-align: center;
+      box-shadow: 0 8px 30px rgba(0,0,0,0.15);
+      animation: popIn .3s ease;
+    }
+    .confirm-title { font-size: 16px; font-weight: 700; color: #1e293b; margin-bottom: 8px; }
+    .confirm-msg { font-size: 14px; color: #64748b; margin-bottom: 20px; line-height: 1.5; }
+    .confirm-btns { display: flex; gap: 10px; }
+    .confirm-btns button {
+      flex: 1; padding: 12px; font-size: 15px; font-weight: 700;
+      border: none; border-radius: 10px; cursor: pointer;
+    }
+    .confirm-cancel { background: #f1f5f9; color: #64748b; }
+    .confirm-ok { background: #E53E3E; color: #fff; }
   </style>
 </head>
 <body>
@@ -100,6 +128,7 @@
     <div id="status" class="status">系統載入與身分驗證中...</div>
     <button id="btnIn" class="btn btn-in" onclick="doPunch('上班')" disabled>上班打卡</button>
     <button id="btnOut" class="btn btn-out" onclick="doPunch('下班')" disabled>下班打卡</button>
+    <p id="punchHint" class="punch-hint" style="display:none"></p>
     <p class="footer-note">系統將自動偵測距離您最近的門店據點</p>
   </div>
 
@@ -112,9 +141,22 @@
       <div id="modalDate" class="modal-date"></div>
       <div id="modalTime" class="modal-time">12:35</div>
       <div id="modalLocation" class="modal-location">不老客家麻糬 (台北松江店)</div>
+      <div id="modalWarning" class="modal-warning" style="display:none"></div>
       <div id="modalLineNote" class="modal-line-note" style="display:none">LINE 出勤憑證已發送</div>
       <button class="modal-close-btn" onclick="closeAndExit()">確認</button>
       <div class="modal-auto" id="modalAuto">5 秒後自動關閉</div>
+    </div>
+  </div>
+
+  <!-- 確認彈窗（打錯卡警告） -->
+  <div class="modal-overlay" id="confirmModal">
+    <div class="confirm-box">
+      <div class="confirm-title">⚠️ 再次確認</div>
+      <div class="confirm-msg" id="confirmMsg"></div>
+      <div class="confirm-btns">
+        <button class="confirm-cancel" onclick="cancelConfirm()">取消</button>
+        <button class="confirm-ok" id="confirmOkBtn">確定打卡</button>
+      </div>
     </div>
   </div>
 
@@ -131,9 +173,11 @@
     const MAX_DISTANCE = 1000; // 公尺
 
     /* ══ 全域變數 ══════════════════════════════════ */
-    let userProfile   = null;
+    let userProfile    = null;
     let autoCloseTimer = null;
     let cachedPosition = null;
+    let expectedNext   = null;   // '上班' | '下班' | null（無法判斷）
+    let punchAnomaly   = null;   // 'sameType' | 'duplicate' | null
 
     /* ══ 即時時鐘 ══════════════════════════════════ */
     const WD = ['日','一','二','三','四','五','六'];
@@ -175,12 +219,71 @@
         userProfile = await liff.getProfile();
         document.getElementById("status").innerText =
           `哈囉，${userProfile.displayName}！\n請點擊下方按鈕執行現場出勤打卡。`;
-        setButtonsDisabled(false);
         preloadGPS();
+        // 查詢今日最後一筆打卡，智慧設定按鈕狀態
+        await fetchLastPunch();
       } catch (err) {
         document.getElementById("status").innerText =
           "連線初始化失敗，請聯絡系統管理員。\n(" + err.message + ")";
       }
+    }
+
+    /* ══ 查詢最後打卡狀態 ══════════════════════════ */
+    async function fetchLastPunch() {
+      try {
+        const url = GAS_URL + '?action=lastPunch&uid=' + encodeURIComponent(userProfile.userId);
+        const res = await fetch(url);
+        const data = await res.json();
+        // data = { lastPunch: '上班'|'下班'|null, lastTime: 'HH:mm'|null }
+        if (data && data.lastPunch) {
+          expectedNext = (data.lastPunch === '上班') ? '下班' : '上班';
+          updateButtonStates(data.lastPunch, data.lastTime);
+        } else {
+          // 今天還沒打卡
+          expectedNext = '上班';
+          updateButtonStates(null, null);
+        }
+      } catch (e) {
+        // GAS 不支援 GET 或網路問題 → 降級：兩個按鈕都亮
+        expectedNext = null;
+        setButtonsEnabled();
+      }
+    }
+
+    function updateButtonStates(lastPunch, lastTime) {
+      const btnIn  = document.getElementById('btnIn');
+      const btnOut = document.getElementById('btnOut');
+      const hint   = document.getElementById('punchHint');
+
+      btnIn.disabled  = false;
+      btnOut.disabled = false;
+
+      if (!lastPunch) {
+        // 今天沒打過卡 → 上班亮、下班淡
+        btnIn.classList.remove('btn-dim');
+        btnOut.classList.add('btn-dim');
+        hint.textContent = '💡 今天尚未打卡，請先打上班卡';
+        hint.style.display = 'block';
+      } else if (lastPunch === '上班') {
+        // 已打上班 → 下班亮、上班淡
+        btnIn.classList.add('btn-dim');
+        btnOut.classList.remove('btn-dim');
+        hint.textContent = `💡 已於 ${lastTime} 打上班卡，下一步為下班打卡`;
+        hint.style.display = 'block';
+      } else {
+        // 已打下班 → 上班亮、下班淡（可能是隔天或補打）
+        btnIn.classList.remove('btn-dim');
+        btnOut.classList.add('btn-dim');
+        hint.textContent = `💡 已於 ${lastTime} 完成下班打卡`;
+        hint.style.display = 'block';
+      }
+    }
+
+    function setButtonsEnabled() {
+      document.getElementById('btnIn').disabled  = false;
+      document.getElementById('btnOut').disabled = false;
+      document.getElementById('btnIn').classList.remove('btn-dim');
+      document.getElementById('btnOut').classList.remove('btn-dim');
     }
 
     /* ══ GPS 預熱 ══════════════════════════════════ */
@@ -211,30 +314,65 @@
       return { shop: best, dist: minDist };
     }
 
+    /* ══ 確認彈窗（打錯卡警告）════════════════════ */
+    function showConfirm(statusType) {
+      const msg = (statusType === expectedNext)
+        ? ''  // 不應該走到這裡
+        : (expectedNext === '下班')
+          ? `您今天已經打過上班卡了。\n確定要再次打「${statusType}」嗎？`
+          : (expectedNext === '上班' && statusType === '下班')
+            ? '您今天尚未打上班卡。\n確定要直接打「下班」嗎？'
+            : `您上次打的是「${statusType}」。\n確定要再次打「${statusType}」嗎？`;
+
+      document.getElementById('confirmMsg').innerText = msg;
+      document.getElementById('confirmOkBtn').onclick = function() {
+        document.getElementById('confirmModal').classList.remove('show');
+        executePunch(statusType);
+      };
+      document.getElementById('confirmModal').classList.add('show');
+    }
+
+    function cancelConfirm() {
+      document.getElementById('confirmModal').classList.remove('show');
+      setButtonsEnabled();
+    }
+
     /* ══ 打卡主流程 ════════════════════════════════ */
     function doPunch(statusType) {
-      const statusDiv = document.getElementById("status");
+      setButtonsDisabled(true);
+
+      // 如果點了非預期的按鈕，先跳確認
+      if (expectedNext && statusType !== expectedNext) {
+        showConfirm(statusType);
+        return;
+      }
+
+      executePunch(statusType);
+    }
+
+    function executePunch(statusType) {
       setButtonsDisabled(true);
 
       if (!navigator.geolocation) {
         alert("您的裝置不支援定位功能。");
-        setButtonsDisabled(false);
+        setButtonsEnabled();
         return;
       }
 
       // 有快取位置（30秒內）就直接用
       if (cachedPosition && (Date.now() - cachedPosition.timestamp) < 30000) {
-        statusDiv.innerText = "同步中...";
+        document.getElementById("status").innerText = "同步中...";
         processPosition(cachedPosition, statusType);
         return;
       }
 
-      statusDiv.innerText = "定位中...";
+      document.getElementById("status").innerText = "定位中...";
       navigator.geolocation.getCurrentPosition(
         (pos) => { processPosition(pos, statusType); },
         () => {
-          statusDiv.innerText = "無法鎖定座標。\n請確保已開啟「定位服務(GPS)」，並授權 LINE 存取位置資訊。";
-          setButtonsDisabled(false);
+          document.getElementById("status").innerText =
+            "無法鎖定座標。\n請確保已開啟「定位服務(GPS)」，並授權 LINE 存取位置資訊。";
+          setButtonsEnabled();
         },
         { enableHighAccuracy: false, timeout: 5000, maximumAge: 30000 }
       );
@@ -246,7 +384,7 @@
       if (dist > MAX_DISTANCE) {
         document.getElementById("status").innerText =
           `❌ 打卡遭到系統攔截\n您目前距離最近的據點為【${shop.name}】\n直線距離約 ${Math.round(dist)} 公尺，已超出現場規定範圍 (${MAX_DISTANCE}m)。`;
-        setButtonsDisabled(false);
+        setButtonsEnabled();
         return;
       }
 
@@ -260,7 +398,7 @@
       preloadGPS();
     }
 
-    /* ══ 寫入 GAS ══════════════════════════════════ */
+    /* ══ 寫入 GAS（含異常偵測）════════════════════ */
     async function sendDataToGAS(statusType, locationName, dist) {
       const payload = {
         uid: userProfile.userId,
@@ -281,19 +419,82 @@
           document.getElementById("status").innerText =
             "⚠️ 資料庫寫入異常，請截圖通知管理員協助補登。";
         }
+        // 讀取 GAS 回傳的異常偵測結果
+        if (result.anomaly) {
+          punchAnomaly = result.anomaly;
+          showAnomalyWarning(result.anomaly, statusType);
+        }
       } catch (err) {
         document.getElementById("status").innerText =
           "⚠️ 網路不穩導致傳輸中斷，請截圖此畫面作為憑證，並通知管理員補登。";
       }
     }
 
+    function showAnomalyWarning(anomaly, statusType) {
+      const warningEl = document.getElementById('modalWarning');
+      if (anomaly === 'sameType') {
+        warningEl.textContent = `⚠️ 偵測到連續打「${statusType}」卡，請確認是否正確`;
+        warningEl.style.display = 'block';
+      } else if (anomaly === 'duplicate') {
+        warningEl.textContent = '⚠️ 偵測到短時間內重複打卡，請確認';
+        warningEl.style.display = 'block';
+      }
+    }
+
     /* ══ LINE 出勤憑證通知（Flex Message）══════════ */
     async function sendLINEReceipt(statusType, locationName, punchTime) {
-      // 只有在 LINE 聊天視窗內開啟 LIFF 時才能發訊息
       if (!liff.isInClient()) return;
 
       const { dateStr, timeStr } = fmtDateTime(punchTime);
       const isIn = (statusType === '上班');
+
+      // 組裝 body 內容
+      const bodyContents = [
+        {
+          type: "box", layout: "horizontal",
+          contents: [
+            { type: "text", text: "員工", color: "#aaaaaa", size: "sm", flex: 2 },
+            { type: "text", text: userProfile.displayName, weight: "bold", size: "sm", flex: 5, align: "end" }
+          ]
+        },
+        { type: "separator" },
+        {
+          type: "box", layout: "horizontal",
+          contents: [
+            { type: "text", text: "日期", color: "#aaaaaa", size: "sm", flex: 2 },
+            { type: "text", text: dateStr, weight: "bold", size: "sm", flex: 5, align: "end" }
+          ]
+        },
+        {
+          type: "box", layout: "horizontal",
+          contents: [
+            { type: "text", text: "時間", color: "#aaaaaa", size: "sm", flex: 2 },
+            { type: "text", text: timeStr, weight: "bold", size: "lg", flex: 5, align: "end", color: "#1e293b" }
+          ]
+        },
+        { type: "separator" },
+        {
+          type: "box", layout: "horizontal",
+          contents: [
+            { type: "text", text: "地點", color: "#aaaaaa", size: "sm", flex: 2 },
+            { type: "text", text: locationName, weight: "bold", size: "sm", flex: 5, align: "end", wrap: true }
+          ]
+        }
+      ];
+
+      // 如果前端偵測到打錯卡（點了非預期按鈕且確認），加入警示
+      if (expectedNext && statusType !== expectedNext) {
+        bodyContents.push({
+          type: "box", layout: "horizontal",
+          backgroundColor: "#FFF3CD",
+          cornerRadius: "8px",
+          paddingAll: "8px",
+          margin: "lg",
+          contents: [
+            { type: "text", text: "⚠️ 員工手動確認打此卡（非預期順序）", size: "xxs", color: "#856404", wrap: true }
+          ]
+        });
+      }
 
       const flexMsg = {
         type: "flex",
@@ -302,99 +503,28 @@
           type: "bubble",
           size: "kilo",
           header: {
-            type: "box",
-            layout: "vertical",
+            type: "box", layout: "vertical",
             backgroundColor: isIn ? "#06C755" : "#E53E3E",
             paddingAll: "16px",
-            contents: [
-              {
-                type: "box",
-                layout: "horizontal",
-                contents: [
-                  {
-                    type: "text",
-                    text: "✅ 出勤打卡記錄",
-                    color: "#ffffff",
-                    weight: "bold",
-                    size: "md",
-                    flex: 1
-                  },
-                  {
-                    type: "text",
-                    text: statusType,
-                    color: "#ffffff",
-                    weight: "bold",
-                    size: "sm",
-                    align: "end",
-                    gravity: "center"
-                  }
-                ]
-              }
-            ]
+            contents: [{
+              type: "box", layout: "horizontal",
+              contents: [
+                { type: "text", text: "✅ 出勤打卡記錄", color: "#ffffff", weight: "bold", size: "md", flex: 1 },
+                { type: "text", text: statusType, color: "#ffffff", weight: "bold", size: "sm", align: "end", gravity: "center" }
+              ]
+            }]
           },
           body: {
-            type: "box",
-            layout: "vertical",
-            spacing: "md",
-            paddingAll: "20px",
-            contents: [
-              {
-                type: "box",
-                layout: "horizontal",
-                contents: [
-                  { type: "text", text: "員工", color: "#aaaaaa", size: "sm", flex: 2 },
-                  { type: "text", text: userProfile.displayName, weight: "bold", size: "sm", flex: 5, align: "end" }
-                ]
-              },
-              { type: "separator" },
-              {
-                type: "box",
-                layout: "horizontal",
-                contents: [
-                  { type: "text", text: "日期", color: "#aaaaaa", size: "sm", flex: 2 },
-                  { type: "text", text: dateStr, weight: "bold", size: "sm", flex: 5, align: "end" }
-                ]
-              },
-              {
-                type: "box",
-                layout: "horizontal",
-                contents: [
-                  { type: "text", text: "時間", color: "#aaaaaa", size: "sm", flex: 2 },
-                  { type: "text", text: timeStr, weight: "bold", size: "lg", flex: 5, align: "end", color: "#1e293b" }
-                ]
-              },
-              { type: "separator" },
-              {
-                type: "box",
-                layout: "horizontal",
-                contents: [
-                  { type: "text", text: "地點", color: "#aaaaaa", size: "sm", flex: 2 },
-                  { type: "text", text: locationName, weight: "bold", size: "sm", flex: 5, align: "end", wrap: true }
-                ]
-              }
-            ]
+            type: "box", layout: "vertical",
+            spacing: "md", paddingAll: "20px",
+            contents: bodyContents
           },
           footer: {
-            type: "box",
-            layout: "vertical",
+            type: "box", layout: "vertical",
             paddingAll: "12px",
             contents: [
-              {
-                type: "text",
-                text: "此訊息為出勤記錄雙方憑證，請勿刪除",
-                size: "xxs",
-                color: "#aaaaaa",
-                align: "center",
-                wrap: true
-              },
-              {
-                type: "text",
-                text: "好食齋食品行｜不老客家麻糬",
-                size: "xxs",
-                color: "#cccccc",
-                align: "center",
-                margin: "sm"
-              }
+              { type: "text", text: "此訊息為出勤記錄雙方憑證，請勿刪除", size: "xxs", color: "#aaaaaa", align: "center", wrap: true },
+              { type: "text", text: "好食齋食品行｜不老客家麻糬", size: "xxs", color: "#cccccc", align: "center", margin: "sm" }
             ]
           }
         }
@@ -402,12 +532,9 @@
 
       try {
         await liff.sendMessages([flexMsg]);
-        // 顯示已發送提示
         const noteEl = document.getElementById("modalLineNote");
-        if (noteEl) { noteEl.style.display = "block"; }
+        if (noteEl) noteEl.style.display = "block";
       } catch (e) {
-        // sendMessages 失敗（可能不在聊天視窗或未授權 chat_message.write）
-        // 靜默失敗 — 彈窗仍在，只是沒發 LINE 訊息
         console.log("LINE sendMessages 失敗:", e.message);
       }
     }
@@ -417,22 +544,21 @@
       const { dateStr, timeStr } = fmtDateTime(punchTime);
       const isIn = (statusType === '上班');
 
-      document.getElementById("modalIcon").textContent   = isIn ? '✅' : '🔴';
+      document.getElementById("modalIcon").textContent    = isIn ? '✅' : '🔴';
       document.getElementById("modalDate").textContent    = dateStr;
       document.getElementById("modalTime").textContent    = timeStr;
       document.getElementById("modalLocation").textContent = locationName;
+      document.getElementById("modalWarning").style.display = "none";
+      document.getElementById("modalLineNote").style.display = "none";
 
       const typeEl = document.getElementById("modalType");
       typeEl.textContent = statusType;
       typeEl.className = 'modal-type ' + (isIn ? 'modal-type-in' : 'modal-type-out');
 
-      // 隱藏 LINE 通知提示（由 sendLINEReceipt 決定是否顯示）
-      document.getElementById("modalLineNote").style.display = "none";
-
       document.getElementById("successModal").classList.add("show");
       document.getElementById("status").innerText = `✅ ${statusType}打卡完成！`;
 
-      // 倒數 5 秒自動關閉（延長給員工看清楚）
+      // 倒數 5 秒自動關閉
       let countdown = 5;
       const autoEl = document.getElementById("modalAuto");
       autoEl.textContent = countdown + ' 秒後自動關閉';
