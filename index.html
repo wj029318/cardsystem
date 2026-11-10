@@ -273,21 +273,22 @@
         const url = GAS_URL + '?action=lastPunch&uid=' + encodeURIComponent(userProfile.userId);
         const res = await fetch(url);
         const text = await res.text();
-        // === 暫時除錯：顯示 GAS 回應 ===
-        const dbg = document.getElementById('debugInfo');
-        if (dbg) dbg.textContent = 'GAS回應: ' + text + ' | UID: ' + userProfile.userId.substring(0,8) + '...';
-        // ================================
         const data = JSON.parse(text);
+        const cached = loadLastPunchLocal();
+        // === 暫時除錯 ===
+        const dbg = document.getElementById('debugInfo');
+        if (dbg) dbg.textContent = 'GAS:' + (data && data.lastPunch || 'null') +
+          ' | LS:' + (cached ? cached.status : 'empty') +
+          ' | 決策:' + (data && data.lastPunch ? 'GAS' : cached ? '保留LS' : '預設上班');
+        // ================
         if (data && data.lastPunch) {
           expectedNext = (data.lastPunch === '上班') ? '下班' : '上班';
           updateButtonStates(data.lastPunch, data.lastTime);
+        } else if (cached) {
+          // GAS 回傳 null，但 localStorage 有今天紀錄 → 不覆蓋
         } else {
-          // GAS 回傳 null，但 localStorage 有今天紀錄就不覆蓋
-          const cached = loadLastPunchLocal();
-          if (!cached) {
-            expectedNext = '上班';
-            updateButtonStates(null, null);
-          }
+          expectedNext = '上班';
+          updateButtonStates(null, null);
         }
       } catch (e) {
         const dbg = document.getElementById('debugInfo');
