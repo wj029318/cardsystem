@@ -130,7 +130,6 @@
     <button id="btnOut" class="btn btn-out" onclick="doPunch('下班')" disabled>下班打卡</button>
     <p id="punchHint" class="punch-hint" style="display:none"></p>
     <p class="footer-note">系統將自動偵測距離您最近的門店據點</p>
-    <p id="debugInfo" style="font-size:11px;color:#999;margin-top:10px;word-break:break-all;text-align:left;padding:0 10px;"></p>
   </div>
 
   <!-- 打卡成功彈窗 -->
@@ -275,12 +274,6 @@
         const text = await res.text();
         const data = JSON.parse(text);
         const cached = loadLastPunchLocal();
-        // === 暫時除錯 ===
-        const dbg = document.getElementById('debugInfo');
-        if (dbg) dbg.textContent = 'GAS:' + (data && data.lastPunch || 'null') +
-          ' | LS:' + (cached ? cached.status : 'empty') +
-          ' | 決策:' + (data && data.lastPunch ? 'GAS' : cached ? '保留LS' : '預設上班');
-        // ================
         if (data && data.lastPunch) {
           expectedNext = (data.lastPunch === '上班') ? '下班' : '上班';
           updateButtonStates(data.lastPunch, data.lastTime);
@@ -291,8 +284,6 @@
           updateButtonStates(null, null);
         }
       } catch (e) {
-        const dbg = document.getElementById('debugInfo');
-        if (dbg) dbg.textContent = '錯誤: ' + e.message;
         expectedNext = null;
         setButtonsEnabled();
       }
