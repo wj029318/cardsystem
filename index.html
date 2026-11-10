@@ -3,7 +3,7 @@
 <head>
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
-  <title>ç¾å ´æºè½å®ä½æå¡</title>
+  <title>現場智能定位打卡</title>
   <script src="https://static.line-scdn.net/liff/edge/2/sdk.js"></script>
   <style>
     body { font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif; text-align: center; padding: 20px; background-color: #f4f6f9; margin: 0; }
@@ -15,13 +15,11 @@
     .btn { display: block; width: 100%; padding: 16px; margin: 12px 0; font-size: 18px; font-weight: bold; color: #fff; border: none; border-radius: 12px; cursor: pointer; transition: all 0.2s; }
     .btn-in { background-color: #06C755; }
     .btn-out { background-color: #E53E3E; }
-    .btn:disabled { background-color: #CBD5E0; cursor: not-allowed; opacity: 1; }
+    .btn:disabled { background-color: #CBD5E0; cursor: not-allowed; }
     .btn:not(:disabled):active { transform: scale(0.97); }
-    .btn-dim { opacity: 0.35; }
-    .punch-hint { font-size: 13px; color: #06C755; font-weight: 600; margin-top: 4px; margin-bottom: 0; }
     .footer-note { font-size: 12px; color: #999; margin-top: 15px; }
 
-    /* æå¡æåå½çª */
+    /* 打卡成功彈窗 */
     .modal-overlay {
       display: none;
       position: fixed; top: 0; left: 0; right: 0; bottom: 0;
@@ -83,12 +81,6 @@
       margin: 8px 0 4px;
       font-weight: 600;
     }
-    .modal-warning {
-      font-size: 13px;
-      color: #E53E3E;
-      font-weight: 600;
-      margin: 8px 0;
-    }
     .modal-close-btn {
       display: block; width: 100%; padding: 14px;
       font-size: 16px; font-weight: 700; color: #fff;
@@ -98,89 +90,53 @@
     .modal-auto {
       font-size: 12px; color: #94a3b8; margin-top: 10px;
     }
-
-    /* ç¢ºèªå½çª */
-    .confirm-box {
-      background: #fff;
-      border-radius: 20px;
-      padding: 28px 24px;
-      width: 300px;
-      text-align: center;
-      box-shadow: 0 8px 30px rgba(0,0,0,0.15);
-      animation: popIn .3s ease;
-    }
-    .confirm-title { font-size: 16px; font-weight: 700; color: #1e293b; margin-bottom: 8px; }
-    .confirm-msg { font-size: 14px; color: #64748b; margin-bottom: 20px; line-height: 1.5; }
-    .confirm-btns { display: flex; gap: 10px; }
-    .confirm-btns button {
-      flex: 1; padding: 12px; font-size: 15px; font-weight: 700;
-      border: none; border-radius: 10px; cursor: pointer;
-    }
-    .confirm-cancel { background: #f1f5f9; color: #64748b; }
-    .confirm-ok { background: #E53E3E; color: #fff; }
   </style>
 </head>
 <body>
   <div class="container">
-    <h1>ð ç¾å ´å°å±¬æå¡ç®çµ±</h1>
+    <h1>📍 現場專屬打卡系統</h1>
     <div id="liveClock" class="clock">--:--</div>
     <div id="liveDate" class="date-display"></div>
-    <div id="status" class="status">ç³»çµ±è¼å¥èèº«åé©è­ä»­...</div>
-    <button id="btnIn" class="btn btn-in" onclick="doPunch('ä¸ç­')" disabled>ä¸ç­æå¡</button>
-    <button id="btnOut" class="btn btn-out" onclick="doPunch('ä¸ç­')" disabled>ä¸ç­æå¡</button>
-    <p id="punchHint" class="punch-hint" style="display:none"></p>
-    <p class="footer-note">ç³»çµ±å°èªååµæ¸¬è·é¢æ¨æè¿çéåºæé»</p>
+    <div id="status" class="status">系統載入與身分驗證中...</div>
+    <button id="btnIn" class="btn btn-in" onclick="doPunch('上班')" disabled>上班打卡</button>
+    <button id="btnOut" class="btn btn-out" onclick="doPunch('下班')" disabled>下班打卡</button>
+    <p class="footer-note">系統將自動偵測距離您最近的門店據點</p>
   </div>
 
-  <!-- æå¡æåå½çª -->
+  <!-- 打卡成功彈窗 -->
   <div class="modal-overlay" id="successModal">
     <div class="modal-box">
-      <div class="modal-icon" id="modalIcon">â</div>
-      <div class="modal-success">æå¡æå</div>
-      <div id="modalType" class="modal-type modal-type-in">ä¸ç­</div>
+      <div class="modal-icon" id="modalIcon">✅</div>
+      <div class="modal-success">打卡成功</div>
+      <div id="modalType" class="modal-type modal-type-in">上班</div>
       <div id="modalDate" class="modal-date"></div>
       <div id="modalTime" class="modal-time">12:35</div>
-      <div id="modalLocation" class="modal-location">ä¸èå®¢å®¶éº»ç³¬ (å°åæ¾æ±åº)</div>
-      <div id="modalWarning" class="modal-warning" style="display:none"></div>
-      <div id="modalLineNote" class="modal-line-note" style="display:none">LINE åºå¤æè­å·²ç¼é</div>
-      <button class="modal-close-btn" onclick="closeAndExit()">ç¢ºèª</button>
-      <div class="modal-auto" id="modalAuto">5 ç§å¾èªåéé</div>
-    </div>
-  </div>
-
-  <!-- ç¢ºèªå½çªï¼æé¯å¡è­¦åï¼ -->
-  <div class="modal-overlay" id="confirmModal">
-    <div class="confirm-box">
-      <div class="confirm-title">â ï¸ åæ¬¡ç¢ºèª</div>
-      <div class="confirm-msg" id="confirmMsg"></div>
-      <div class="confirm-btns">
-        <button class="confirm-cancel" onclick="cancelConfirm()">åæ¶</button>
-        <button class="confirm-ok" id="confirmOkBtn">ç¢ºå®æå¡</button>
-      </div>
+      <div id="modalLocation" class="modal-location">不老客家麻糬 (台北松江店)</div>
+      <div id="modalLineNote" class="modal-line-note" style="display:none">LINE 出勤憑證已發送</div>
+      <button class="modal-close-btn" onclick="closeAndExit()">確認</button>
+      <div class="modal-auto" id="modalAuto">5 秒後自動關閉</div>
     </div>
   </div>
 
   <script>
-    /* ââ è¨­å® ââââââââââââââââââââââââââââââââââââââ */
+    /* ══ 設定 ══════════════════════════════════════ */
     const LIFF_ID  = "2010072814-bLPoqQgt";
     const GAS_URL  = "https://script.google.com/macros/s/AKfycbxbXXm9D-9qeqzuUUU17QOAc1EgJ34058WxKd7CTkfhwwPgppaf2jBEwxnID7kHaZw/exec";
 
     const SHOPS = [
-      { name: "ä¸èå®¢å®¶éº»ç³¬ (å°åæ¾æ±åº)", lat: 25.0610188, lng: 121.5333524 },
-      { name: "ä¸èå®¢å®¶éº»ç³¬ (ä¸éä»è¯åº)", lat: 25.0838607, lng: 121.4843138 },
-      { name: "é æ±Garden City",          lat: 25.0419,    lng: 121.5573 }
+      { name: "不老客家麻糬 (台北松江店)", lat: 25.0610188, lng: 121.5333524 },
+      { name: "不老客家麻糬 (三重仁華店)", lat: 25.0838607, lng: 121.4843138 },
+      { name: "遠東Garden City",          lat: 25.0419,    lng: 121.5573 }
     ];
-    const MAX_DISTANCE = 1000; // å¬å°º
+    const MAX_DISTANCE = 1000; // 公尺
 
-    /* ââ å¨åè®æ¸ ââââââââââââââââââââââââââââââââââ */
-    let userProfile    = null;
+    /* ══ 全域變數 ══════════════════════════════════ */
+    let userProfile   = null;
     let autoCloseTimer = null;
     let cachedPosition = null;
-    let expectedNext   = null;   // 'ä¸ç­' | 'ä¸ç­' | nullï¼ç¡æ³å¤æ·ï¼
-    let punchAnomaly   = null;   // 'sameType' | 'duplicate' | null
 
-    /* ââ å³ææé ââââââââââââââââââââââââââââââââââ */
-    const WD = ['æ¥','ä¸','äº','ä¸','å','äº','å­'];
+    /* ══ 即時時鐘 ══════════════════════════════════ */
+    const WD = ['日','一','二','三','四','五','六'];
     function tickClock() {
       const now = new Date();
       const hh = String(now.getHours()).padStart(2,'0');
@@ -189,12 +145,12 @@
       document.getElementById('liveClock').textContent = hh + ':' + mm + ':' + ss;
       const y = now.getFullYear(), mo = now.getMonth()+1, d = now.getDate();
       document.getElementById('liveDate').textContent =
-        `${y}/${String(mo).padStart(2,'0')}/${String(d).padStart(2,'0')}ï¼é±${WD[now.getDay()]}ï¼`;
+        `${y}/${String(mo).padStart(2,'0')}/${String(d).padStart(2,'0')}（週${WD[now.getDay()]}）`;
     }
     setInterval(tickClock, 1000);
     tickClock();
 
-    /* ââ æ ¼å¼åå·¥å· ââââââââââââââââââââââââââââââââ */
+    /* ══ 格式化工具 ════════════════════════════════ */
     function fmtDateTime(date) {
       const y  = date.getFullYear();
       const mo = String(date.getMonth()+1).padStart(2,'0');
@@ -202,91 +158,32 @@
       const hh = String(date.getHours()).padStart(2,'0');
       const mm = String(date.getMinutes()).padStart(2,'0');
       return {
-        dateStr: `${y}/${mo}/${d}ï¼é±${WD[date.getDay()]}ï¼`,
+        dateStr: `${y}/${mo}/${d}（週${WD[date.getDay()]}）`,
         timeStr: `${hh}:${mm}`,
         fullStr: `${y}/${mo}/${d} ${hh}:${mm}`
       };
     }
 
-    /* ââ LIFF åå§å âââââââââââââââââââââââââââââââ */
+    /* ══ LIFF 初始化 ═══════════════════════════════ */
     async function main() {
       try {
         if (!LIFF_ID || LIFF_ID.includes("LIFF_ID")) {
-          throw new Error("æªè½è®åå°ææç LIFF ID å±¬æ§");
+          throw new Error("未能讀取到有效的 LIFF ID 屬性");
         }
         await liff.init({ liffId: LIFF_ID });
         if (!liff.isLoggedIn()) { liff.login(); return; }
         userProfile = await liff.getProfile();
         document.getElementById("status").innerText =
-          `ååï¼${userProfile.displayName}ï¼\nè«é»æä¸æ¹æéå·è¡ç¾å ´åºå¤æå¡ã`;
+          `哈囉，${userProfile.displayName}！\n請點擊下方按鈕執行現場出勤打卡。`;
+        setButtonsDisabled(false);
         preloadGPS();
-        // æ¥è©¢ä»æ¥æå¾ä¸ç­æå¡ï¼æºæ§è¨­å®æéçæ
-        await fetchLastPunch();
       } catch (err) {
         document.getElementById("status").innerText =
-          "é£ç·åå§åå¤±æï¼è«è¯çµ¡ç³»çµ±ç®¡çå¡ã\n(" + err.message + ")";
+          "連線初始化失敗，請聯絡系統管理員。\n(" + err.message + ")";
       }
     }
 
-    /* ââ æ¥è©¢æå¾æå¡çæ ââââââââââââââââââââââââââ */
-    async function fetchLastPunch() {
-      try {
-        const url = GAS_URL + '?action=lastPunch&uid=' + encodeURIComponent(userProfile.userId);
-        const res = await fetch(url);
-        const data = await res.json();
-        // data = { lastPunch: 'ä¸ç­'|'ä¸ç­'|null, lastTime: 'HH:mm'|null }
-        if (data && data.lastPunch) {
-          expectedNext = (data.lastPunch === 'ä¸ç­') ? 'ä¸ç­' : 'ä¸ç­';
-          updateButtonStates(data.lastPunch, data.lastTime);
-        } else {
-          // ä»å¤©éæ²æå¡
-          expectedNext = 'ä¸ç­';
-          updateButtonStates(null, null);
-        }
-      } catch (e) {
-        // GAS ä¸æ¯æ´ GET æç¶²è·¯åé¡ â éç´ï¼å©åæéé½äº®
-        expectedNext = null;
-        setButtonsEnabled();
-      }
-    }
-
-    function updateButtonStates(lastPunch, lastTime) {
-      const btnIn  = document.getElementById('btnIn');
-      const btnOut = document.getElementById('btnOut');
-      const hint   = document.getElementById('punchHint');
-
-      btnIn.disabled  = false;
-      btnOut.disabled = false;
-
-      if (!lastPunch) {
-        // ä»å¤©æ²æéå¡ â ä¸ç­äº®ãä¸ç­æ·¡
-        btnIn.classList.remove('btn-dim');
-        btnOut.classList.add('btn-dim');
-        hint.textContent = 'ð¡ ä»å¤©å°æªæå¡ï¼è«åæä¸ç­å¡';
-        hint.style.display = 'block';
-      } else if (lastPunch === 'ä¸ç­') {
-        // å·²æä¸ç­ â ä¸ç­äº®ãä¸ç­æ·¡
-        btnIn.classList.add('btn-dim');
-        btnOut.classList.remove('btn-dim');
-        hint.textContent = `ð¡ å·²æ¼ ${lastTime} æä¸ç­å¡ï¼ä¸ä¸æ­¥çºä¸ç­æå¡`;
-        hint.style.display = 'block';
-      } else {
-        // å·²æä¸ç­ â ä¸ç­äº®ãä¸ç­æ·¡ï¼å¯è½æ¯éå¤©æè£æï¼
-        btnIn.classList.remove('btn-dim');
-        btnOut.classList.add('btn-dim');
-        hint.textContent = `ð¡ å·²æ¼ ${lastTime} å®æä¸ç­æå¡`;
-        hint.style.display = 'block';
-      }
-    }
-
-    function setButtonsEnabled() {
-      document.getElementById('btnIn').disabled  = false;
-      document.getElementById('btnOut').disabled = false;
-      document.getElementById('btnIn').classList.remove('btn-dim');
-      document.getElementById('btnOut').classList.remove('btn-dim');
-    }
-
-    /* ââ GPS é ç± ââââââââââââââââââââââââââââââââââ */
+    /* ══ GPS 預熱 ══════════════════════════════════ */
     function preloadGPS() {
       if (!navigator.geolocation) return;
       navigator.geolocation.getCurrentPosition(
@@ -296,7 +193,7 @@
       );
     }
 
-    /* ââ è·é¢è¨ç® ââââââââââââââââââââââââââââââââââ */
+    /* ══ 距離計算 ══════════════════════════════════ */
     function getDistance(lat1, lon1, lat2, lon2) {
       const R = 6371e3;
       const p1 = lat1 * Math.PI/180, p2 = lat2 * Math.PI/180;
@@ -314,65 +211,30 @@
       return { shop: best, dist: minDist };
     }
 
-    /* ââ ç¢ºèªå½çªï¼æé¯å¡è­¦åï¼ââââââââââââââââââââ */
-    function showConfirm(statusType) {
-      const msg = (statusType === expectedNext)
-        ? ''  // ä¸æè©²èµ°å°éè£¡
-        : (expectedNext === 'ä¸ç­')
-          ? `æ¨ä»å¤©å·²ç¶æéä¸ç­å¡äºã\nç¢ºå®è¦åæ¬¡æã${statusType}ãåï¼`
-          : (expectedNext === 'ä¸ç­' && statusType === 'ä¸ç­')
-            ? 'æ¨ä»å¤©å°æªæä¸ç­å¡ã\nç¢ºå®è¦ç´æ¥æãä¸ç­ãåï¼'
-            : `æ¨ä¸æ¬¡æçæ¯ã${statusType}ãã\nç¢ºå®è¦åæ¬¡æã${statusType}ãåï¼`;
-
-      document.getElementById('confirmMsg').innerText = msg;
-      document.getElementById('confirmOkBtn').onclick = function() {
-        document.getElementById('confirmModal').classList.remove('show');
-        executePunch(statusType);
-      };
-      document.getElementById('confirmModal').classList.add('show');
-    }
-
-    function cancelConfirm() {
-      document.getElementById('confirmModal').classList.remove('show');
-      setButtonsEnabled();
-    }
-
-    /* ââ æå¡ä¸»æµç¨ ââââââââââââââââââââââââââââââââ */
+    /* ══ 打卡主流程 ════════════════════════════════ */
     function doPunch(statusType) {
-      setButtonsDisabled(true);
-
-      // å¦æé»äºéé æçæéï¼åè·³ç¢ºèª
-      if (expectedNext && statusType !== expectedNext) {
-        showConfirm(statusType);
-        return;
-      }
-
-      executePunch(statusType);
-    }
-
-    function executePunch(statusType) {
+      const statusDiv = document.getElementById("status");
       setButtonsDisabled(true);
 
       if (!navigator.geolocation) {
-        alert("æ¨çè£ç½®ä¸æ¯æ´å®ä½åè½ã");
-        setButtonsEnabled();
+        alert("您的裝置不支援定位功能。");
+        setButtonsDisabled(false);
         return;
       }
 
-      // æå¿«åä½ç½®ï¼30ç§å§ï¼å°±ç´æ¥ç¨
+      // 有快取位置（30秒內）就直接用
       if (cachedPosition && (Date.now() - cachedPosition.timestamp) < 30000) {
-        document.getElementById("status").innerText = "åæ­¥ä¸­...";
+        statusDiv.innerText = "同步中...";
         processPosition(cachedPosition, statusType);
         return;
       }
 
-      document.getElementById("status").innerText = "å®ä½ä¸­...";
+      statusDiv.innerText = "定位中...";
       navigator.geolocation.getCurrentPosition(
         (pos) => { processPosition(pos, statusType); },
         () => {
-          document.getElementById("status").innerText =
-            "ç¡æ³éå®åº§æ¨ã\nè«ç¢ºä¿å·²éåãå®ä½æå(GPS)ãï¼ä¸¦ææ¬ LINE å­åä½ç½®è³è¨ã";
-          setButtonsEnabled();
+          statusDiv.innerText = "無法鎖定座標。\n請確保已開啟「定位服務(GPS)」，並授權 LINE 存取位置資訊。";
+          setButtonsDisabled(false);
         },
         { enableHighAccuracy: false, timeout: 5000, maximumAge: 30000 }
       );
@@ -383,22 +245,22 @@
 
       if (dist > MAX_DISTANCE) {
         document.getElementById("status").innerText =
-          `â æå¡é­å°ç³»çµ±ææª\næ¨ç®åè·é¢æè¿çæé»çºã${shop.name}ã\nç´ç·è·é¢ç´ ${Math.round(dist)} å¬å°ºï¼å·²è¶åºç¾å ´è¦å®ç¯å (${MAX_DISTANCE}m)ã`;
-        setButtonsEnabled();
+          `❌ 打卡遭到系統攔截\n您目前距離最近的據點為【${shop.name}】\n直線距離約 ${Math.round(dist)} 公尺，已超出現場規定範圍 (${MAX_DISTANCE}m)。`;
+        setButtonsDisabled(false);
         return;
       }
 
-      // è¨éæå¡ç¬éæé
+      // 記錄打卡瞬間時間
       const punchTime = new Date();
 
-      // åå½çª â èæ¯åæ­¥å¯«å¥ + LINE éç¥
+      // 先彈窗 → 背景同步寫入 + LINE 通知
       showSuccessModal(statusType, shop.name, punchTime);
       sendDataToGAS(statusType, shop.name, dist);
       sendLINEReceipt(statusType, shop.name, punchTime);
       preloadGPS();
     }
 
-    /* ââ å¯«å¥ GASï¼å«ç°å¸¸åµæ¸¬ï¼ââââââââââââââââââââ */
+    /* ══ 寫入 GAS ══════════════════════════════════ */
     async function sendDataToGAS(statusType, locationName, dist) {
       const payload = {
         uid: userProfile.userId,
@@ -417,114 +279,122 @@
         const result = await res.json();
         if (!result.success) {
           document.getElementById("status").innerText =
-            "â ï¸ è³æåº«å¯«å¥ç°å¸¸ï¼è«æªåéç¥ç®¡çå¡åå©è£ç»ã";
-        }
-        // è®å GAS åå³çç°å¸¸åµæ¸¬çµæ
-        if (result.anomaly) {
-          punchAnomaly = result.anomaly;
-          showAnomalyWarning(result.anomaly, statusType);
+            "⚠️ 資料庫寫入異常，請截圖通知管理員協助補登。";
         }
       } catch (err) {
         document.getElementById("status").innerText =
-          "â ï¸ ç¶²è·¯ä¸ç©µå°è´å³è¼¸ä¸­æ·ï¼è«æªåæ­¤ç«é¢ä½çºæè­ï¼ä¸¦éç¥ç®¡çå¡è£ç»ã";
+          "⚠️ 網路不穩導致傳輸中斷，請截圖此畫面作為憑證，並通知管理員補登。";
       }
     }
 
-    function showAnomalyWarning(anomaly, statusType) {
-      const warningEl = document.getElementById('modalWarning');
-      if (anomaly === 'sameType') {
-        warningEl.textContent = `â ï¸ åµæ¸¬å°é£çºæã${statusType}ãå¡ï¼è«ç¢ºèªæ¯å¦æ­£ç¢º`;
-        warningEl.style.display = 'block';
-      } else if (anomaly === 'duplicate') {
-        warningEl.textContent = 'â ï¸ åµæ¸¬å°ç­æéå§éè¤æå¡ï¼è«ç¢ºèª';
-        warningEl.style.display = 'block';
-      }
-    }
-
-    /* ââ LINE åºå¤æè­éç¥ï¼Flex Messageï¼ââââââââââ */
+    /* ══ LINE 出勤憑證通知（Flex Message）══════════ */
     async function sendLINEReceipt(statusType, locationName, punchTime) {
+      // 只有在 LINE 聊天視窗內開啟 LIFF 時才能發訊息
       if (!liff.isInClient()) return;
 
       const { dateStr, timeStr } = fmtDateTime(punchTime);
-      const isIn = (statusType === 'ä¸ç­');
-
-      // çµè£ body å§å®¹
-      const bodyContents = [
-        {
-          type: "box", layout: "horizontal",
-          contents: [
-            { type: "text", text: "å¡å·¥", color: "#aaaaaa", size: "sm", flex: 2 },
-            { type: "text", text: userProfile.displayName, weight: "bold", size: "sm", flex: 5, align: "end" }
-          ]
-        },
-        { type: "separator" },
-        {
-          type: "box", layout: "horizontal",
-          contents: [
-            { type: "text", text: "æ¥æ", color: "#aaaaaa", size: "sm", flex: 2 },
-            { type: "text", text: dateStr, weight: "bold", size: "sm", flex: 5, align: "end" }
-          ]
-        },
-        {
-          type: "box", layout: "horizontal",
-          contents: [
-            { type: "text", text: "æé", color: "#aaaaaa", size: "sm", flex: 2 },
-            { type: "text", text: timeStr, weight: "bold", size: "lg", flex: 5, align: "end", color: "#1e293b" }
-          ]
-        },
-        { type: "separator" },
-        {
-          type: "box", layout: "horizontal",
-          contents: [
-            { type: "text", text: "å°é»", color: "#aaaaaa", size: "sm", flex: 2 },
-            { type: "text", text: locationName, weight: "bold", size: "sm", flex: 5, align: "end", wrap: true }
-          ]
-        }
-      ];
-
-      // å¦æåç«¯åµæ¸¬å°æé¯å¡ï¼é»äºéé ææéä¸ç¢ºèªï¼ï¼å å¥è­¦ç¤º
-      if (expectedNext && statusType !== expectedNext) {
-        bodyContents.push({
-          type: "box", layout: "horizontal",
-          backgroundColor: "#FFF3CD",
-          cornerRadius: "8px",
-          paddingAll: "8px",
-          margin: "lg",
-          contents: [
-            { type: "text", text: "â ï¸ å¡å·¥æåç¢ºèªææ­¤å¡ï¼éé æé åºï¼", size: "xxs", color: "#856404", wrap: true }
-          ]
-        });
-      }
+      const isIn = (statusType === '上班');
 
       const flexMsg = {
         type: "flex",
-        altText: `â ${statusType}æå¡æå ${timeStr}`,
+        altText: `✅ ${statusType}打卡成功 ${timeStr}`,
         contents: {
           type: "bubble",
           size: "kilo",
           header: {
-            type: "box", layout: "vertical",
+            type: "box",
+            layout: "vertical",
             backgroundColor: isIn ? "#06C755" : "#E53E3E",
             paddingAll: "16px",
-            contents: [{
-              type: "box", layout: "horizontal",
-              contents: [
-                { type: "text", text: "â åºå¤æå¡è¨é", color: "#ffffff", weight: "bold", size: "md", flex: 1 },
-                { type: "text", text: statusType, color: "#ffffff", weight: "bold", size: "sm", align: "end", gravity: "center" }
-              ]
-            }]
+            contents: [
+              {
+                type: "box",
+                layout: "horizontal",
+                contents: [
+                  {
+                    type: "text",
+                    text: "✅ 出勤打卡記錄",
+                    color: "#ffffff",
+                    weight: "bold",
+                    size: "md",
+                    flex: 1
+                  },
+                  {
+                    type: "text",
+                    text: statusType,
+                    color: "#ffffff",
+                    weight: "bold",
+                    size: "sm",
+                    align: "end",
+                    gravity: "center"
+                  }
+                ]
+              }
+            ]
           },
           body: {
-            type: "box", layout: "vertical",
-            spacing: "md", paddingAll: "20px",
-            contents: bodyContents
+            type: "box",
+            layout: "vertical",
+            spacing: "md",
+            paddingAll: "20px",
+            contents: [
+              {
+                type: "box",
+                layout: "horizontal",
+                contents: [
+                  { type: "text", text: "員工", color: "#aaaaaa", size: "sm", flex: 2 },
+                  { type: "text", text: userProfile.displayName, weight: "bold", size: "sm", flex: 5, align: "end" }
+                ]
+              },
+              { type: "separator" },
+              {
+                type: "box",
+                layout: "horizontal",
+                contents: [
+                  { type: "text", text: "日期", color: "#aaaaaa", size: "sm", flex: 2 },
+                  { type: "text", text: dateStr, weight: "bold", size: "sm", flex: 5, align: "end" }
+                ]
+              },
+              {
+                type: "box",
+                layout: "horizontal",
+                contents: [
+                  { type: "text", text: "時間", color: "#aaaaaa", size: "sm", flex: 2 },
+                  { type: "text", text: timeStr, weight: "bold", size: "lg", flex: 5, align: "end", color: "#1e293b" }
+                ]
+              },
+              { type: "separator" },
+              {
+                type: "box",
+                layout: "horizontal",
+                contents: [
+                  { type: "text", text: "地點", color: "#aaaaaa", size: "sm", flex: 2 },
+                  { type: "text", text: locationName, weight: "bold", size: "sm", flex: 5, align: "end", wrap: true }
+                ]
+              }
+            ]
           },
           footer: {
-            type: "box", layout: "vertical",
+            type: "box",
+            layout: "vertical",
             paddingAll: "12px",
             contents: [
-              { type: "text", text: "æ­¤è¨æ¯çºåºå¤è¨ééæ¹æè­ï¼è«å¿åªé¤", size: "xxs", color: "#aaaaaa", align: "center", wrap: true },
-              { type: "text", text: "å¥½é£é½é£åè¡ï½ä¸èå®¢å®¶éº»ç³¬", size: "xxs", color: "#cccccc", align: "center", margin: "sm" }
+              {
+                type: "text",
+                text: "此訊息為出勤記錄雙方憑證，請勿刪除",
+                size: "xxs",
+                color: "#aaaaaa",
+                align: "center",
+                wrap: true
+              },
+              {
+                type: "text",
+                text: "好食齋食品行｜不老客家麻糬",
+                size: "xxs",
+                color: "#cccccc",
+                align: "center",
+                margin: "sm"
+              }
             ]
           }
         }
@@ -532,36 +402,40 @@
 
       try {
         await liff.sendMessages([flexMsg]);
+        // 顯示已發送提示
         const noteEl = document.getElementById("modalLineNote");
-        if (noteEl) noteEl.style.display = "block";
+        if (noteEl) { noteEl.style.display = "block"; }
       } catch (e) {
-        console.log("LINE sendMessages å¤±æ:", e.message);
+        // sendMessages 失敗（可能不在聊天視窗或未授權 chat_message.write）
+        // 靜默失敗 — 彈窗仍在，只是沒發 LINE 訊息
+        console.log("LINE sendMessages 失敗:", e.message);
       }
     }
 
-    /* ââ æåå½çª ââââââââââââââââââââââââââââââââââ */
+    /* ══ 成功彈窗 ══════════════════════════════════ */
     function showSuccessModal(statusType, locationName, punchTime) {
       const { dateStr, timeStr } = fmtDateTime(punchTime);
-      const isIn = (statusType === 'ä¸ç­');
+      const isIn = (statusType === '上班');
 
-      document.getElementById("modalIcon").textContent    = isIn ? 'â' : 'ð´';
+      document.getElementById("modalIcon").textContent   = isIn ? '✅' : '🔴';
       document.getElementById("modalDate").textContent    = dateStr;
       document.getElementById("modalTime").textContent    = timeStr;
       document.getElementById("modalLocation").textContent = locationName;
-      document.getElementById("modalWarning").style.display = "none";
-      document.getElementById("modalLineNote").style.display = "none";
 
       const typeEl = document.getElementById("modalType");
       typeEl.textContent = statusType;
       typeEl.className = 'modal-type ' + (isIn ? 'modal-type-in' : 'modal-type-out');
 
-      document.getElementById("successModal").classList.add("show");
-      document.getElementById("status").innerText = `â ${statusType}æå¡å®æï¼`;
+      // 隱藏 LINE 通知提示（由 sendLINEReceipt 決定是否顯示）
+      document.getElementById("modalLineNote").style.display = "none";
 
-      // åæ¸ 5 ç§èªåéé
+      document.getElementById("successModal").classList.add("show");
+      document.getElementById("status").innerText = `✅ ${statusType}打卡完成！`;
+
+      // 倒數 5 秒自動關閉（延長給員工看清楚）
       let countdown = 5;
       const autoEl = document.getElementById("modalAuto");
-      autoEl.textContent = countdown + ' ç§å¾èªåéé';
+      autoEl.textContent = countdown + ' 秒後自動關閉';
       if (autoCloseTimer) clearInterval(autoCloseTimer);
       autoCloseTimer = setInterval(() => {
         countdown--;
@@ -569,7 +443,7 @@
           clearInterval(autoCloseTimer);
           closeAndExit();
         } else {
-          autoEl.textContent = countdown + ' ç§å¾èªåéé';
+          autoEl.textContent = countdown + ' 秒後自動關閉';
         }
       }, 1000);
     }
@@ -580,7 +454,7 @@
       try { liff.closeWindow(); } catch(e) {}
     }
 
-    /* ââ å·¥å· ââââââââââââââââââââââââââââââââââââââ */
+    /* ══ 工具 ══════════════════════════════════════ */
     function setButtonsDisabled(disabled) {
       document.getElementById("btnIn").disabled  = disabled;
       document.getElementById("btnOut").disabled = disabled;
