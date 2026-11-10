@@ -282,8 +282,12 @@
           expectedNext = (data.lastPunch === '上班') ? '下班' : '上班';
           updateButtonStates(data.lastPunch, data.lastTime);
         } else {
-          expectedNext = '上班';
-          updateButtonStates(null, null);
+          // GAS 回傳 null，但 localStorage 有今天紀錄就不覆蓋
+          const cached = loadLastPunchLocal();
+          if (!cached) {
+            expectedNext = '上班';
+            updateButtonStates(null, null);
+          }
         }
       } catch (e) {
         const dbg = document.getElementById('debugInfo');
