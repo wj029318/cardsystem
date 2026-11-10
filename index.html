@@ -130,6 +130,7 @@
     <button id="btnOut" class="btn btn-out" onclick="doPunch('下班')" disabled>下班打卡</button>
     <p id="punchHint" class="punch-hint" style="display:none"></p>
     <p class="footer-note">系統將自動偵測距離您最近的門店據點</p>
+    <p id="debugInfo" style="font-size:11px;color:#999;margin-top:10px;word-break:break-all;text-align:left;padding:0 10px;"></p>
   </div>
 
   <!-- 打卡成功彈窗 -->
@@ -179,6 +180,33 @@
     let expectedNext   = null;   // '上班' | '下班' | null（無法判斷）
     let punchAnomaly   = null;   // 'sameType' | 'duplicate' | null
 
+    /* ══ localStorage 防呆快取 ═════════════════════ */
+    const LS_KEY = 'bulao_lastPunch';
+    function saveLastPunchLocal(statusType, timeStr) {
+      try {
+        const today = new Date();
+        const dateKey = today.getFullYear() + '/' +
+          String(today.getMonth()+1).padStart(2,'0') + '/' +
+          String(today.getDate()).padStart(2,'0');
+        localStorage.setItem(LS_KEY, JSON.stringify({
+          date: dateKey, status: statusType, time: timeStr
+        }));
+      } catch(e) { /* localStorage 不可用就略過 */ }
+    }
+    function loadLastPunchLocal() {
+      try {
+        const raw = localStorage.getItem(LS_KEY);
+        if (!raw) return null;
+        const data = JSON.parse(raw);
+        const today = new Date();
+        const dateKey = today.getFullYear() + '/' +
+          String(today.getMonth()+1).padStart(2,'0') + '/' +
+          String(today.getDate()).padStart(2,'0');
+        if (data.date !== dateKey) return null; // 不是今天的紀錄
+        return data; // { date, status, time }
+      } catch(e) { return null; }
+    }
+
     /* ══ 即時時鐘 ══════════════════════════════════ */
     const WD = ['日','一','二','三','四','五','六'];
     function tickClock() {
@@ -220,8 +248,19 @@
         document.getElementById("status").innerText =
           `哈囉，${userProfile.displayName}！\n請點擊下方按鈕執行現場出勤打卡。`;
         preloadGPS();
-        // 查詢今日最後一筆打卡，智慧設定按鈕狀態
-        await fetchLastPunch();
+
+        // 先從 localStorage 快速還原按鈕狀態（瞬間亮燈）
+        const cached = loadLastPunchLocal();
+        if (cached) {
+          expectedNext = (cached.status === '上班') ? '下班' : '上班';
+          updateButtonStates(cached.status, cached.time);
+        } else {
+          expectedNext = '上班';
+          updateButtonStates(null, null);
+        }
+
+        // 背景向 GAS 查詢（不阻塞按鈕顯示）
+        fetchLastPunch();
       } catch (err) {
         document.getElementById("status").innerText =
           "連線初始化失敗，請聯絡系統管理員。\n(" + err.message + ")";
@@ -233,18 +272,22 @@
       try {
         const url = GAS_URL + '?action=lastPunch&uid=' + encodeURIComponent(userProfile.userId);
         const res = await fetch(url);
-        const data = await res.json();
-        // data = { lastPunch: '上班'|'下班'|null, lastTime: 'HH:mm'|null }
+        const text = await res.text();
+        // === 暫時除錯：顯示 GAS 回應 ===
+        const dbg = document.getElementById('debugInfo');
+        if (dbg) dbg.textContent = 'GAS回應: ' + text + ' | UID: ' + userProfile.userId.substring(0,8) + '...';
+        // ================================
+        const data = JSON.parse(text);
         if (data && data.lastPunch) {
           expectedNext = (data.lastPunch === '上班') ? '下班' : '上班';
           updateButtonStates(data.lastPunch, data.lastTime);
         } else {
-          // 今天還沒打卡
           expectedNext = '上班';
           updateButtonStates(null, null);
         }
       } catch (e) {
-        // GAS 不支援 GET 或網路問題 → 降級：兩個按鈕都亮
+        const dbg = document.getElementById('debugInfo');
+        if (dbg) dbg.textContent = '錯誤: ' + e.message;
         expectedNext = null;
         setButtonsEnabled();
       }
@@ -397,10 +440,11 @@
       sendLINEReceipt(statusType, shop.name, punchTime);
       preloadGPS();
 
-      // 打卡成功後立即更新防呆狀態
+      // 打卡成功後立即更新防呆狀態 + 寫入 localStorage
       const { timeStr } = fmtDateTime(punchTime);
       expectedNext = (statusType === '上班') ? '下班' : '上班';
       updateButtonStates(statusType, timeStr);
+      saveLastPunchLocal(statusType, timeStr);
     }
 
     /* ══ 寫入 GAS（含異常偵測）════════════════════ */
