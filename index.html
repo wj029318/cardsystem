@@ -396,6 +396,11 @@
       sendDataToGAS(statusType, shop.name, dist);
       sendLINEReceipt(statusType, shop.name, punchTime);
       preloadGPS();
+
+      // 打卡成功後立即更新防呆狀態
+      const { timeStr } = fmtDateTime(punchTime);
+      expectedNext = (statusType === '上班') ? '下班' : '上班';
+      updateButtonStates(statusType, timeStr);
     }
 
     /* ══ 寫入 GAS（含異常偵測）════════════════════ */
